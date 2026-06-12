@@ -1,260 +1,241 @@
-import React, { useState, useRef } from 'react';
-import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2 } from 'lucide-react';
+
+// --- Firebase のインポートと初期化 ---
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+
+// 実行環境から提供される設定を読み込む
+let firebaseConfig = {};
+try {
+  if (typeof __firebase_config !== 'undefined') {
+    firebaseConfig = JSON.parse(__firebase_config);
+  }
+} catch (e) {
+  console.error("Firebase config parsing error", e);
+}
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-// 初期データ
-const initialCategories = [
-  { id: 'c1', name: '仕事' },
-  { id: 'c2', name: 'プライベート' },
-  { id: 'c3', name: 'アイデア' }
-];
-
-const initialNotes = [
-  {
-    id: '1',
-    title: 'プロジェクト企画書の作成',
-    categoryId: 'c1',
-    isCompleted: false,
-    blocks: [
-      { id: 'b1', type: 'text', content: '明日の会議までに骨子をまとめる。' },
-      { id: 'b2', type: 'list', content: '目的の明確化' },
-      { id: 'b3', type: 'list', content: '競合リサーチ' },
-      { id: 'b4', type: 'checkbox', content: 'ドラフト作成', checked: false },
-      { id: 'b5', type: 'checkbox', content: 'レビュー依頼', checked: false },
-    ]
-  },
-  {
-    id: '2',
-    title: 'デザイン案の検討',
-    categoryId: 'c1',
-    isCompleted: false,
-    blocks: [
-      { id: 'b6', type: 'text', content: '新しいUIのコンセプト案を作成する。\n参考になりそうなサイトをいくつかピックアップしておくこと。' },
-    ]
-  },
-  {
-    id: '3',
-    title: '週末の買い物',
-    categoryId: 'c2',
-    isCompleted: false,
-    blocks: [
-      { id: 'b7', type: 'checkbox', content: 'コーヒー豆', checked: false },
-      { id: 'b8', type: 'checkbox', content: '洗剤', checked: false },
-      { id: 'b9', type: 'checkbox', content: '卵', checked: true },
-      { id: 'b10', type: 'checkbox', content: 'ティッシュ', checked: false },
-    ]
-  },
-  {
-    id: '4',
-    title: '過去の資料整理',
-    categoryId: 'c1',
-    isCompleted: true,
-    blocks: [
-      { id: 'b11', type: 'text', content: '先月のプロジェクト資料をGoogle Driveのアーカイブフォルダに移動させる。' },
-    ]
-  },
-];
+// 画像を圧縮してFirestoreの保存上限（1MB）を超えないようにする処理
+const compressImage = (dataUrl) => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX_WIDTH = 800;
+      let width = img.width;
+      let height = img.height;
+      if (width > MAX_WIDTH) {
+        height = Math.round((height * MAX_WIDTH) / width);
+        width = MAX_WIDTH;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.7)); // 品質を70%に圧縮
+    };
+    img.src = dataUrl;
+  });
+};
 
 export default function App() {
-  const [categories, setCategories] = useState(initialCategories);
-  const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id);
-  const [notes, setNotes] = useState(initialNotes);
+  // --- 認証・データステート ---
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // 完了済みの表示切り替えステート
+  // --- アプリのステート ---
+  const [categories, setCategories] = useState([]);
+  const [activeCategoryId, setActiveCategoryId] = useState('');
+  const [notes, setNotes] = useState([]);
   const [showCompleted, setShowCompleted] = useState(false);
-
-  // カテゴリー編集用ステート
   const [editingCategoryId, setEditingCategoryId] = useState(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
 
-  // モーダル管理（新規作成・編集共通）
+  // モーダル・フォーム管理
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingNote, setEditingNote] = useState(null); // nullなら新規
-
-  // フォームステート（ブロックベース）
-  const [formData, setFormData] = useState({
-    title: '',
-    categoryId: '',
-    blocks: []
-  });
-
+  const [editingNote, setEditingNote] = useState(null);
+  const [formData, setFormData] = useState({ title: '', categoryId: '', blocks: [] });
   const fileInputRef = useRef(null);
 
-  // ドラッグ＆ドロップ状態
+  // ドラッグ＆ドロップ管理
   const [draggedNoteId, setDraggedNoteId] = useState(null);
   const [dragOverNoteId, setDragOverNoteId] = useState(null);
 
-  // --- カテゴリー（タブ）操作 ---
-  const handleAddCategory = () => {
-    const newCategory = { id: generateId(), name: '新しいカテゴリー' };
-    setCategories([...categories, newCategory]);
-    setActiveCategoryId(newCategory.id);
-    setEditingCategoryId(newCategory.id);
+  // ==========================================
+  // Firebase の初期化とデータ同期 (useEffect)
+  // ==========================================
+
+  // 1. 認証（ログイン）処理
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth error", error);
+      }
+    };
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. クラウドデータベースとの同期
+  useEffect(() => {
+    if (!user) {
+      setCategories([]);
+      setNotes([]);
+      return;
+    }
+
+    const categoriesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'categories');
+    const notesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'notes');
+
+    let isInitialCategoryLoad = true;
+
+    // カテゴリーの同期
+    const unsubCategories = onSnapshot(categoriesRef, (snapshot) => {
+      const loadedCategories = snapshot.docs.map(d => d.data()).sort((a, b) => a.createdAt - b.createdAt);
+      
+      // 初回起動時、カテゴリーが1つもなければ自動作成する
+      if (loadedCategories.length === 0 && isInitialCategoryLoad) {
+        const defaultId = generateId();
+        setDoc(doc(categoriesRef, defaultId), {
+          id: defaultId,
+          name: 'メインボード',
+          createdAt: Date.now()
+        });
+      } else {
+        setCategories(loadedCategories);
+        setActiveCategoryId(prev => loadedCategories.find(c => c.id === prev) ? prev : loadedCategories[0]?.id);
+      }
+      isInitialCategoryLoad = false;
+    }, (error) => console.error(error));
+
+    // メモの同期
+    const unsubNotes = onSnapshot(notesRef, (snapshot) => {
+      const loadedNotes = snapshot.docs.map(d => d.data()).sort((a, b) => a.order - b.order);
+      setNotes(loadedNotes);
+      setLoading(false); // データ読み込み完了
+    }, (error) => console.error(error));
+
+    return () => {
+      unsubCategories();
+      unsubNotes();
+    };
+  }, [user]);
+
+  // Firestoreドキュメントの参照ヘルパー
+  const getCategoryDoc = (id) => doc(db, 'artifacts', appId, 'users', user.uid, 'categories', id);
+  const getNoteDoc = (id) => doc(db, 'artifacts', appId, 'users', user.uid, 'notes', id);
+
+  // ==========================================
+  // クラウド同期対応の各操作アクション
+  // ==========================================
+
+  // --- カテゴリー操作 ---
+  const handleAddCategory = async () => {
+    if (!user) return;
+    const newId = generateId();
+    const newCategory = { id: newId, name: '新しいカテゴリー', createdAt: Date.now() };
+    await setDoc(getCategoryDoc(newId), newCategory);
+    setActiveCategoryId(newId);
+    setEditingCategoryId(newId);
     setEditingCategoryName(newCategory.name);
   };
 
-  const saveCategoryName = (id) => {
-    if (editingCategoryName.trim() === '') return;
-    setCategories(categories.map(c => 
-      c.id === id ? { ...c, name: editingCategoryName.trim() } : c
-    ));
+  const saveCategoryName = async (id) => {
+    if (!user || editingCategoryName.trim() === '') return;
+    await setDoc(getCategoryDoc(id), { name: editingCategoryName.trim() }, { merge: true });
     setEditingCategoryId(null);
   };
 
-  const handleDeleteCategory = (id) => {
-    if (categories.length === 1) return; // 最低1つは残す
-    setCategories(categories.filter(c => c.id !== id));
-    if (activeCategoryId === id) {
-      setActiveCategoryId(categories.find(c => c.id !== id).id);
-    }
+  const handleDeleteCategory = async (id) => {
+    if (!user || categories.length <= 1) return;
+    await deleteDoc(getCategoryDoc(id));
   };
 
-  // --- メモの操作 ---
+  // --- メモ操作 ---
   const openAddModal = () => {
     setEditingNote(null);
     setFormData({
       title: '',
       categoryId: activeCategoryId,
-      blocks: [{ id: generateId(), type: 'text', content: '' }] // 初期ブロックを1つ用意
+      blocks: [{ id: generateId(), type: 'text', content: '', checked: false }]
     });
     setIsModalOpen(true);
   };
 
   const openEditModal = (note) => {
     setEditingNote(note);
-    // blocksが存在しない古いデータ対応のフォールバック
-    const initialBlocks = note.blocks || [{ id: generateId(), type: 'text', content: note.content || '' }];
+    const initialBlocks = note.blocks || [{ id: generateId(), type: 'text', content: note.content || '', checked: false }];
     setFormData({ ...note, blocks: initialBlocks });
     setIsModalOpen(true);
   };
 
-  const saveNote = (e) => {
+  const saveNote = async (e) => {
     e.preventDefault();
-    if (!formData.title.trim()) return;
+    if (!formData.title.trim() || !user) return;
 
     if (editingNote) {
-      setNotes(notes.map(n => n.id === editingNote.id ? { ...formData } : n));
+      await setDoc(getNoteDoc(editingNote.id), formData, { merge: true });
     } else {
-      setNotes([...notes, { ...formData, id: generateId(), isCompleted: false }]);
+      const newId = generateId();
+      await setDoc(getNoteDoc(newId), {
+        ...formData,
+        id: newId,
+        isCompleted: false,
+        createdAt: Date.now(),
+        order: Date.now() // 新規追加は一番後ろにする
+      });
     }
     setIsModalOpen(false);
   };
 
-  const deleteNote = (id) => {
-    setNotes(notes.filter(n => n.id !== id));
+  const deleteNote = async (id) => {
+    if (!user) return;
+    await deleteDoc(getNoteDoc(id));
     setIsModalOpen(false);
   };
 
-  const toggleComplete = (e, id) => {
+  const toggleComplete = async (e, id) => {
     e.stopPropagation();
-    setNotes(notes.map(n => n.id === id ? { ...n, isCompleted: !n.isCompleted } : n));
+    if (!user) return;
+    const note = notes.find(n => n.id === id);
+    if (note) {
+      // 楽観的UI更新（すぐに切り替える）
+      setNotes(notes.map(n => n.id === id ? { ...n, isCompleted: !n.isCompleted } : n));
+      // クラウド同期
+      await setDoc(getNoteDoc(id), { isCompleted: !note.isCompleted }, { merge: true });
+    }
   };
 
-  const handleBoardBlockCheckToggle = (e, noteId, blockId) => {
+  const handleBoardBlockCheckToggle = async (e, noteId, blockId) => {
     e.stopPropagation();
-    setNotes(notes.map(note => {
-      if (note.id !== noteId) return note;
-      return {
-        ...note,
-        blocks: note.blocks.map(b => b.id === blockId ? { ...b, checked: !b.checked } : b)
-      };
-    }));
-  };
-
-  // --- ブロックエディタの操作 ---
-  const addBlock = (type) => {
-    setFormData(prev => ({
-      ...prev,
-      blocks: [...prev.blocks, { id: generateId(), type, content: '', checked: false }]
-    }));
-  };
-
-  const updateBlock = (blockId, updates) => {
-    setFormData(prev => ({
-      ...prev,
-      blocks: prev.blocks.map(b => b.id === blockId ? { ...b, ...updates } : b)
-    }));
-  };
-
-  const removeBlock = (blockId) => {
-    setFormData(prev => ({
-      ...prev,
-      blocks: prev.blocks.filter(b => b.id !== blockId)
-    }));
-  };
-
-  const handleTextareaResize = (e) => {
-    e.target.style.height = 'auto';
-    e.target.style.height = `${e.target.scrollHeight}px`;
-  };
-
-  const handleKeyDown = (e, index, blockType) => {
-    if (e.nativeEvent.isComposing) return; // 変換中のEnterは無視
-
-    if (e.key === 'Enter' && !e.shiftKey) {
-      // リストやチェックボックスの場合は、Enterで次の項目を自動生成
-      if (blockType === 'list' || blockType === 'checkbox') {
-        e.preventDefault();
-        const newBlock = { id: generateId(), type: blockType, content: '', checked: false };
-        const newBlocks = [...formData.blocks];
-        newBlocks.splice(index + 1, 0, newBlock);
-        setFormData({ ...formData, blocks: newBlocks });
-        
-        setTimeout(() => {
-          document.getElementById(`block-input-${newBlock.id}`)?.focus();
-        }, 0);
-      }
-    }
-    
-    // 入力が空の状態でBackspaceを押したらブロックを削除して前に戻る
-    if (e.key === 'Backspace' && formData.blocks[index].content === '') {
-      e.preventDefault();
-      removeBlock(formData.blocks[index].id);
-      if (index > 0) {
-        document.getElementById(`block-input-${formData.blocks[index - 1].id}`)?.focus();
-      }
+    if (!user) return;
+    const note = notes.find(n => n.id === noteId);
+    if (note) {
+      const newBlocks = note.blocks.map(b => b.id === blockId ? { ...b, checked: !b.checked } : b);
+      setNotes(notes.map(n => n.id === noteId ? { ...n, blocks: newBlocks } : n)); // 楽観的更新
+      await setDoc(getNoteDoc(noteId), { blocks: newBlocks }, { merge: true }); // クラウド同期
     }
   };
 
-  // --- 画像操作 ---
-  const handleImageSelect = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setFormData(prev => ({
-        ...prev,
-        blocks: [...prev.blocks, { id: generateId(), type: 'image', content: reader.result }]
-      }));
-    };
-    reader.readAsDataURL(file);
-    e.target.value = null; // 同じファイルを再選択可能にする
-  };
-
-  const handlePaste = (e, index) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf('image') !== -1) {
-        e.preventDefault();
-        const file = items[i].getAsFile();
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const newBlock = { id: generateId(), type: 'image', content: reader.result };
-          const newBlocks = [...formData.blocks];
-          // ペーストしたブロックの直後に画像を挿入
-          newBlocks.splice(index + 1, 0, newBlock);
-          setFormData({ ...formData, blocks: newBlocks });
-        };
-        reader.readAsDataURL(file);
-        break;
-      }
-    }
-  };
-
-  // --- ドラッグ＆ドロップ処理 ---
+  // --- ドラッグ＆ドロップ処理（並び替え） ---
   const handleDragStart = (e, id) => {
     e.dataTransfer.setData('noteId', id);
     setDraggedNoteId(id);
@@ -279,38 +260,134 @@ export default function App() {
   };
 
   const handleDragLeave = (e, id) => {
-    if (dragOverNoteId === id) {
-      setDragOverNoteId(null);
-    }
+    if (dragOverNoteId === id) setDragOverNoteId(null);
   };
 
-  const handleDrop = (e, targetId) => {
+  const handleDrop = async (e, targetId) => {
     e.preventDefault();
     setDragOverNoteId(null);
     const sourceId = e.dataTransfer.getData('noteId');
-    if (!sourceId || sourceId === targetId) return;
+    if (!sourceId || sourceId === targetId || !user) return;
 
-    setNotes(prevNotes => {
-      // 現在のカテゴリーのノートと、それ以外のノートを分ける
-      const otherNotes = prevNotes.filter(n => n.categoryId !== activeCategoryId);
-      const categoryNotes = prevNotes.filter(n => n.categoryId === activeCategoryId);
-      
-      const sourceIndex = categoryNotes.findIndex(n => n.id === sourceId);
-      const targetIndex = categoryNotes.findIndex(n => n.id === targetId);
-      
-      if(sourceIndex === -1 || targetIndex === -1) return prevNotes;
+    const categoryNotes = notes.filter(n => n.categoryId === activeCategoryId).sort((a,b) => a.order - b.order);
+    const sourceIndex = categoryNotes.findIndex(n => n.id === sourceId);
+    const targetIndex = categoryNotes.findIndex(n => n.id === targetId);
+    
+    if (sourceIndex === -1 || targetIndex === -1) return;
 
-      const newCategoryNotes = [...categoryNotes];
-      const [removed] = newCategoryNotes.splice(sourceIndex, 1);
-      
-      // ドロップした対象の位置に挿入して順序を入れ替える
-      newCategoryNotes.splice(targetIndex, 0, removed);
+    // 配列の並び替え
+    const newCategoryNotes = [...categoryNotes];
+    const [removed] = newCategoryNotes.splice(sourceIndex, 1);
+    newCategoryNotes.splice(targetIndex, 0, removed);
 
-      return [...otherNotes, ...newCategoryNotes];
+    // 新しい順序番号（order）を割り当てる
+    const updatedNotes = newCategoryNotes.map((note, index) => ({
+      ...note,
+      order: index * 1000 // 隙間を空けて保存（計算を簡略化するため）
+    }));
+
+    // 楽観的UI更新（画面上はすぐに並び替える）
+    setNotes(prev => {
+      const otherNotes = prev.filter(n => n.categoryId !== activeCategoryId);
+      return [...otherNotes, ...updatedNotes];
     });
+
+    // 全ての変更をクラウドに保存
+    for (const note of updatedNotes) {
+      await setDoc(getNoteDoc(note.id), { order: note.order }, { merge: true });
+    }
   };
 
-  // 完了済みの状態を考慮してノートをフィルタリング
+  // --- ブロックエディタ・画像関連 ---
+  const addBlock = (type) => {
+    setFormData(prev => ({
+      ...prev,
+      blocks: [...prev.blocks, { id: generateId(), type, content: '', checked: false }]
+    }));
+  };
+
+  const updateBlock = (blockId, updates) => {
+    setFormData(prev => ({
+      ...prev,
+      blocks: prev.blocks.map(b => b.id === blockId ? { ...b, ...updates } : b)
+    }));
+  };
+
+  const removeBlock = (blockId) => {
+    setFormData(prev => ({ ...prev, blocks: prev.blocks.filter(b => b.id !== blockId) }));
+  };
+
+  const handleTextareaResize = (e) => {
+    e.target.style.height = 'auto';
+    e.target.style.height = `${e.target.scrollHeight}px`;
+  };
+
+  const handleKeyDown = (e, index, blockType) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (blockType === 'list' || blockType === 'checkbox') {
+        e.preventDefault();
+        const newBlock = { id: generateId(), type: blockType, content: '', checked: false };
+        const newBlocks = [...formData.blocks];
+        newBlocks.splice(index + 1, 0, newBlock);
+        setFormData({ ...formData, blocks: newBlocks });
+        setTimeout(() => document.getElementById(`block-input-${newBlock.id}`)?.focus(), 0);
+      }
+    }
+    if (e.key === 'Backspace' && formData.blocks[index].content === '') {
+      e.preventDefault();
+      removeBlock(formData.blocks[index].id);
+      if (index > 0) document.getElementById(`block-input-${formData.blocks[index - 1].id}`)?.focus();
+    }
+  };
+
+  const handleImageSelect = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const compressedUrl = await compressImage(reader.result); // クラウド保存用に圧縮
+      setFormData(prev => ({
+        ...prev,
+        blocks: [...prev.blocks, { id: generateId(), type: 'image', content: compressedUrl }]
+      }));
+    };
+    reader.readAsDataURL(file);
+    e.target.value = null;
+  };
+
+  const handlePaste = async (e, index) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const compressedUrl = await compressImage(reader.result); // クラウド保存用に圧縮
+          const newBlock = { id: generateId(), type: 'image', content: compressedUrl };
+          const newBlocks = [...formData.blocks];
+          newBlocks.splice(index + 1, 0, newBlock);
+          setFormData({ ...formData, blocks: newBlocks });
+        };
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
+  };
+
+
+  // データ読み込み中の表示
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center text-slate-500">
+        <Loader2 className="w-8 h-8 animate-spin text-indigo-500 mb-4" />
+        <p className="font-medium">クラウドと同期中...</p>
+      </div>
+    );
+  }
+
   const activeNotes = notes.filter(n => 
     n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted)
   );
@@ -318,7 +395,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
       <style dangerouslySetInnerHTML={{__html: `
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
       `}} />
@@ -327,7 +404,7 @@ export default function App() {
       <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
         <div className="px-6 py-4 flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight text-slate-800 flex items-center gap-2">
-            Kanban Notes
+            Kanban Notes <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-1 rounded-full font-bold ml-2">Cloud Synced</span>
           </h1>
           <button
             onClick={() => openAddModal()}
@@ -338,7 +415,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* カテゴリー（タブ）ナビゲーションと右端のトグル */}
+        {/* カテゴリー（タブ）ナビゲーション */}
         <div className="px-6 flex items-end gap-2 overflow-x-auto custom-scrollbar pb-0">
           {categories.map(category => (
             <div
@@ -419,8 +496,7 @@ export default function App() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 items-start pb-10">
               {activeNotes.map((note) => {
-                // サムネイル用の最初の画像を取得
-                const firstImageBlock = note.blocks.find(b => b.type === 'image');
+                const firstImageBlock = note.blocks?.find(b => b.type === 'image');
                 
                 return (
                   <div
@@ -438,7 +514,6 @@ export default function App() {
                       ${note.isCompleted ? 'bg-slate-50 border-slate-200 opacity-60 hover:opacity-100' : 'bg-white border-slate-200'}
                     `}
                   >
-                    {/* 画像サムネイル */}
                     {firstImageBlock && (
                       <div className="mb-3 rounded-lg overflow-hidden h-32 bg-slate-100 border border-slate-200 flex items-center justify-center opacity-90">
                         <img src={firstImageBlock.content} alt="サムネイル" className="max-w-full max-h-full object-cover" />
@@ -459,10 +534,9 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* 本文プレビュー（高さ制限あり・フェードアウト） */}
                     <div className="relative overflow-hidden max-h-48 rounded-b-lg">
                       <div className="space-y-0.5 text-[15px] pb-6">
-                        {note.blocks.map(block => (
+                        {note.blocks?.map(block => (
                           <div key={block.id}>
                             {block.type === 'text' && <div className={`whitespace-pre-wrap leading-relaxed ${note.isCompleted ? 'text-slate-400' : 'text-slate-600'}`}>{block.content}</div>}
                             {block.type === 'list' && (
@@ -493,7 +567,6 @@ export default function App() {
                           </div>
                         ))}
                       </div>
-                      {/* グラデーションで下部をフェードアウト */}
                       <div className={`absolute bottom-0 left-0 right-0 h-10 pointer-events-none ${note.isCompleted ? 'bg-gradient-to-t from-slate-50 to-transparent' : 'bg-gradient-to-t from-white to-transparent'}`}></div>
                     </div>
                   </div>
@@ -504,74 +577,46 @@ export default function App() {
         </div>
       </main>
 
-      {/* ノート追加・編集モーダル（ブロックエディタ） */}
+      {/* ノート追加・編集モーダル */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
-            
-            {/* モーダルヘッダー */}
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 rounded-t-2xl shrink-0">
               <h2 className="text-lg font-bold text-slate-800">
                 {editingNote ? 'メモを編集' : '新しいメモ'}
               </h2>
               <div className="flex items-center gap-2">
                 {editingNote && (
-                  <button
-                    type="button"
-                    onClick={() => deleteNote(editingNote.id)}
-                    className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors"
-                    title="削除"
-                  >
+                  <button type="button" onClick={() => deleteNote(editingNote.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors" title="削除">
                     <Trash2 className="w-5 h-5" />
                   </button>
                 )}
-                <button
-                  onClick={() => setIsModalOpen(false)}
-                  className="text-slate-400 hover:bg-slate-200 p-2 rounded-lg transition-colors"
-                >
+                <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:bg-slate-200 p-2 rounded-lg transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>
             </div>
 
-            {/* モーダルボディ（エディタ部分）とフッターを包含するフォーム */}
             <form onSubmit={saveNote} className="flex-1 overflow-hidden flex flex-col">
-              
               <div className="flex-1 overflow-y-auto p-6 custom-scrollbar flex flex-col">
                 <div className="space-y-6 flex-1">
-                  {/* タイトル */}
                   <div>
-                    <input
-                      type="text"
-                      required
-                      value={formData.title}
-                      onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                      className="w-full px-2 py-2 text-2xl font-bold text-slate-800 border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 outline-none transition-colors bg-transparent placeholder:text-slate-300"
-                      placeholder="タイトルを入力..."
-                    />
+                    <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full px-2 py-2 text-2xl font-bold text-slate-800 border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 outline-none transition-colors bg-transparent placeholder:text-slate-300" placeholder="タイトルを入力..." />
                   </div>
 
-                  {/* メタ情報（カテゴリー） */}
                   <div className="flex gap-4">
                     <div className="flex-1 max-w-xs">
                       <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">カテゴリー</label>
-                      <select
-                        value={formData.categoryId}
-                        onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-sm"
-                      >
+                      <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-sm">
                         {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
                     </div>
                   </div>
 
-                  {/* 本文（ブロックエディタ） */}
                   <div className="pt-2 border-t border-slate-100 relative">
                     <div className="space-y-0 pb-10">
-                      {formData.blocks.map((block, index) => (
+                      {formData.blocks?.map((block, index) => (
                         <div key={block.id} className="flex gap-2 items-start group">
-                          
-                          {/* 左側の装飾アイコン */}
                           <div className="w-6 flex justify-center mt-1 flex-shrink-0">
                             {block.type === 'list' && <div className="text-slate-400 font-bold">•</div>}
                             {block.type === 'checkbox' && (
@@ -581,7 +626,6 @@ export default function App() {
                             )}
                           </div>
                           
-                          {/* メインコンテンツ */}
                           <div className="flex-1">
                             {block.type === 'image' ? (
                               <div className="relative inline-block my-2">
@@ -591,78 +635,40 @@ export default function App() {
                               <textarea
                                 id={`block-input-${block.id}`}
                                 value={block.content}
-                                onChange={(e) => {
-                                  handleTextareaResize(e);
-                                  updateBlock(block.id, { content: e.target.value });
-                                }}
+                                onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); }}
                                 onKeyDown={(e) => handleKeyDown(e, index, block.type)}
                                 onPaste={(e) => handlePaste(e, index)}
                                 className={`w-full bg-transparent resize-none outline-none py-1 min-h-[28px] overflow-hidden leading-relaxed
-                                  ${block.type === 'checkbox' && block.checked ? 'text-slate-400 line-through' : 'text-slate-700'}
-                                  text-[15px]
-                                `}
+                                  ${block.type === 'checkbox' && block.checked ? 'text-slate-400 line-through' : 'text-slate-700'} text-[15px]`}
                                 rows={1}
                                 placeholder={block.type === 'text' ? "テキストを入力するか、画像をペースト..." : "項目を入力..."}
                               />
                             )}
                           </div>
 
-                          {/* 削除ボタン */}
-                          <button 
-                            type="button" 
-                            onClick={() => removeBlock(block.id)} 
-                            className="opacity-0 group-hover:opacity-100 mt-1 p-1 text-slate-300 hover:text-red-500 rounded transition-opacity"
-                            title="このブロックを削除"
-                          >
+                          <button type="button" onClick={() => removeBlock(block.id)} className="opacity-0 group-hover:opacity-100 mt-1 p-1 text-slate-300 hover:text-red-500 rounded transition-opacity" title="このブロックを削除">
                             <X className="w-4 h-4" />
                           </button>
                         </div>
                       ))}
                     </div>
 
-                    {/* ブロック追加ツールバー */}
                     <div className="sticky bottom-0 bg-white/90 backdrop-blur-sm py-3 border-t border-slate-100 flex items-center gap-2">
                       <span className="text-xs font-bold text-slate-400 uppercase mr-2">追加</span>
-                      <button type="button" onClick={() => addBlock('text')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
-                        <AlignLeft className="w-4 h-4" /> テキスト
-                      </button>
-                      <button type="button" onClick={() => addBlock('list')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
-                        <List className="w-4 h-4" /> リスト
-                      </button>
-                      <button type="button" onClick={() => addBlock('checkbox')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
-                        <CheckSquare className="w-4 h-4" /> チェック
-                      </button>
-                      <button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
-                        <ImageIcon className="w-4 h-4" /> 画像
-                      </button>
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        onChange={handleImageSelect}
-                        accept="image/*"
-                        className="hidden"
-                      />
+                      <button type="button" onClick={() => addBlock('text')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"><AlignLeft className="w-4 h-4" /> テキスト</button>
+                      <button type="button" onClick={() => addBlock('list')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"><List className="w-4 h-4" /> リスト</button>
+                      <button type="button" onClick={() => addBlock('checkbox')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"><CheckSquare className="w-4 h-4" /> チェック</button>
+                      <button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"><ImageIcon className="w-4 h-4" /> 画像</button>
+                      <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
                     </div>
                   </div>
-
                 </div>
               </div>
 
-              {/* モーダルフッター */}
               <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 rounded-b-2xl shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-5 py-2.5 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors"
-                >
-                  キャンセル
-                </button>
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors shadow-sm flex items-center gap-2"
-                >
-                  <Check className="w-4 h-4" />
-                  保存する
+                <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors">キャンセル</button>
+                <button type="submit" className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors shadow-sm flex items-center gap-2">
+                  <Check className="w-4 h-4" /> 保存する
                 </button>
               </div>
             </form>
