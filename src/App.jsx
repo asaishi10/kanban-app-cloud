@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle } from 'lucide-react';
+import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle, LogOut } from 'lucide-react';
 
 // --- Firebase のインポートと初期化 ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
 // ▼▼▼ ここをご自身のFirebase設定に書き換えてください ▼▼▼
@@ -31,6 +31,7 @@ const isConfigValid = firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_A
 
 const app = isConfigValid ? initializeApp(firebaseConfig) : null;
 const auth = isConfigValid ? getAuth(app) : null;
+const provider = new GoogleAuthProvider(); // Googleログイン用のプロバイダ
 const db = isConfigValid ? getFirestore(app) : null;
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -89,24 +90,36 @@ export default function App() {
   useEffect(() => {
     if (!isConfigValid) return;
 
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (error) {
-        console.error("Auth error", error);
-      }
-    };
-    initAuth();
-
+    // ログイン状態の監視
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
+      if (!currentUser) {
+        setLoading(false); // ログアウト状態ならローディングを解除してログイン画面を出す
+      }
     });
     return () => unsubscribe();
   }, []);
+
+  // Googleログイン処理
+  const handleGoogleLogin = async () => {
+    try {
+      setLoading(true);
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Login error", error);
+      alert("ログインに失敗しました。もう一度お試しください。");
+      setLoading(false);
+    }
+  };
+
+  // ログアウト処理
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Logout error", error);
+    }
+  };
 
   // 2. クラウドデータベースとの同期
   useEffect(() => {
@@ -419,6 +432,34 @@ export default function App() {
     );
   }
 
+  // ログインしていない場合の画面
+  if (!user && !loading) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center text-slate-800 p-6">
+        <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center">
+          <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-6 transform rotate-3">
+            <CheckSquare className="w-10 h-10" />
+          </div>
+          <h1 className="text-3xl font-extrabold mb-2 text-slate-800">Kanban Notes</h1>
+          <p className="text-slate-500 mb-8 font-medium">どこからでも、あなたのアイデアにアクセス。</p>
+          
+          <button
+            onClick={handleGoogleLogin}
+            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-4 rounded-xl font-bold transition-all shadow-sm active:scale-[0.98]"
+          >
+            <svg className="w-6 h-6" viewBox="0 0 24 24">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+            </svg>
+            Googleでログインして始める
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center text-slate-500">
@@ -446,13 +487,29 @@ export default function App() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-800 flex items-center gap-2">
             Kanban Notes <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-1 rounded-full font-bold ml-2">Cloud Synced</span>
           </h1>
-          <button
-            onClick={() => openAddModal()}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            新規メモ
-          </button>
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:flex items-center gap-2 text-sm text-slate-500 font-medium">
+              {user?.photoURL ? (
+                <img src={user.photoURL} alt="User" className="w-6 h-6 rounded-full border border-slate-200" />
+              ) : null}
+              {user?.displayName || 'ユーザー'}
+            </div>
+            <button
+              onClick={handleLogout}
+              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              title="ログアウト"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+            <div className="w-px h-6 bg-slate-200 mx-1"></div>
+            <button
+              onClick={() => openAddModal()}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              新規メモ
+            </button>
+          </div>
         </div>
 
         {/* カテゴリー（タブ）ナビゲーション */}
