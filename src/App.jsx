@@ -1,13 +1,23 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2 } from 'lucide-react';
+import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle } from 'lucide-react';
 
 // --- Firebase のインポートと初期化 ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
-// 実行環境から提供される設定を読み込む
-let firebaseConfig = {};
+// ▼▼▼ ここをご自身のFirebase設定に書き換えてください ▼▼▼
+let firebaseConfig = {
+  apiKey: "AIzaSyCqTZxvNFGf0O4_DDa7JQ45Zd8hxYKqYHY",
+  authDomain: "kanban-cloud-app.firebaseapp.com",
+  projectId: "kanban-cloud-app",
+  storageBucket: "kanban-cloud-app.firebasestorage.app",
+  messagingSenderId: "584318556014",
+  appId: "1:584318556014:web:426b5fbfb962b730a7137f"
+};
+// ▲▲▲ ここまで ▲▲▲
+
+// Canvas環境（プレビュー）で動かすための自動切り替え処理
 try {
   if (typeof __firebase_config !== 'undefined') {
     firebaseConfig = JSON.parse(__firebase_config);
@@ -16,10 +26,12 @@ try {
   console.error("Firebase config parsing error", e);
 }
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'kanban-cloud-app';
+const isConfigValid = firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY";
+
+const app = isConfigValid ? initializeApp(firebaseConfig) : null;
+const auth = isConfigValid ? getAuth(app) : null;
+const db = isConfigValid ? getFirestore(app) : null;
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -75,6 +87,8 @@ export default function App() {
 
   // 1. 認証（ログイン）処理
   useEffect(() => {
+    if (!isConfigValid) return;
+
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -96,7 +110,7 @@ export default function App() {
 
   // 2. クラウドデータベースとの同期
   useEffect(() => {
-    if (!user) {
+    if (!user || !isConfigValid) {
       setCategories([]);
       setNotes([]);
       return;
@@ -379,6 +393,32 @@ export default function App() {
 
 
   // データ読み込み中の表示
+  if (!isConfigValid) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center text-slate-800 p-6">
+        <div className="bg-white p-8 rounded-2xl shadow-lg max-w-lg w-full">
+          <div className="w-16 h-16 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold mb-4 text-center">Firebaseの設定が完了していません</h2>
+          <div className="text-slate-600 mb-6 text-sm space-y-3 leading-relaxed">
+            <p>
+              コード内の <code>firebaseConfig</code> が <code>"YOUR_API_KEY"</code> のままになっているため、データベースに接続できません。
+            </p>
+            <p className="font-medium text-slate-800">
+              【解決手順】
+            </p>
+            <ol className="list-decimal list-inside space-y-1 ml-1">
+              <li>Firebase Console でご自身のプロジェクトを開く</li>
+              <li>設定画面から <code>firebaseConfig</code> の文字列をコピー</li>
+              <li>StackBlitzの <code>App.jsx</code> の10行目付近にある該当部分を書き換えて保存</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center text-slate-500">
