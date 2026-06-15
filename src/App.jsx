@@ -17,7 +17,6 @@ let firebaseConfig = {
 };
 // ▲▲▲ ここまで ▲▲▲
 
-// Canvas環境（プレビュー）で動かすための自動切り替え処理
 try {
   if (typeof __firebase_config !== 'undefined') {
     firebaseConfig = JSON.parse(__firebase_config);
@@ -36,7 +35,6 @@ const db = isConfigValid ? getFirestore(app) : null;
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-// 画像を圧縮してFirestoreの保存上限（1MB）を超えないようにする処理
 const compressImage = (dataUrl) => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -79,8 +77,11 @@ export default function App() {
   const [dragOverNoteId, setDragOverNoteId] = useState(null);
   const [dragOverCategoryId, setDragOverCategoryId] = useState(null);
 
+  // ★ 追加: 現在カーソルが当たっているブロックIDを記録（文中への挿入用）
+  const [activeBlockId, setActiveBlockId] = useState(null);
+
   // ==========================================
-  // テキストエリアの高さ自動調整 & 自動スクロール
+  // テキストエリアの自動リサイズ & 確実なスクロール
   // ==========================================
   useEffect(() => {
     if (isModalOpen) {
@@ -94,26 +95,40 @@ export default function App() {
     }
   }, [isModalOpen, formData.blocks]);
 
+  // ★ 確実に入力行を画面に表示させる強力なスクロール関数
+  const ensureVisible = (element) => {
+    if (!element) return;
+    requestAnimationFrame(() => {
+      const container = element.closest('.overflow-y-auto');
+      if (!container) return;
+      
+      const rect = element.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      
+      // スマホのキーボードが被ることを想定し、画面下から180pxは「見えないエリア」として扱う
+      const safeBottom = containerRect.bottom - 180; 
+      const safeTop = containerRect.top + 80;
+      
+      if (rect.bottom > safeBottom) {
+        container.scrollTo({
+          top: container.scrollTop + (rect.bottom - safeBottom),
+          behavior: 'smooth'
+        });
+      } else if (rect.top < safeTop) {
+        container.scrollTo({
+          top: container.scrollTop - (safeTop - rect.top),
+          behavior: 'smooth'
+        });
+      }
+    });
+  };
+
   const handleTextareaResize = (e) => {
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
-    
-    // 入力行が画面下部に隠れないよう、より正確に自動スクロール
-    requestAnimationFrame(() => {
-      const container = el.closest('.overflow-y-auto');
-      if (container) {
-        const rect = el.getBoundingClientRect();
-        const containerRect = container.getBoundingClientRect();
-        const paddingBottom = 60; // 画面下部との十分な余裕
-        
-        if (rect.bottom > containerRect.bottom - paddingBottom) {
-          container.scrollTop += (rect.bottom - (containerRect.bottom - paddingBottom));
-        } else if (rect.top < containerRect.top) {
-          container.scrollTop -= (containerRect.top - rect.top + 20);
-        }
-      }
-    });
+    // 改行等で高さが変わった瞬間に見える位置へスクロール
+    ensureVisible(el);
   };
 
   // ==========================================
@@ -121,7 +136,6 @@ export default function App() {
   // ==========================================
   useEffect(() => {
     if (!isConfigValid) return;
-
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (!currentUser) setLoading(false);
@@ -145,23 +159,15 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch (error) {
-      console.error("Logout error", error);
-    }
+    try { await signOut(auth); } catch (error) { console.error("Logout error", error); }
   };
 
   useEffect(() => {
     if (!user || !isConfigValid) {
-      setCategories([]);
-      setNotes([]);
-      return;
+      setCategories([]); setNotes([]); return;
     }
-
     const categoriesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'categories');
     const notesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'notes');
-
     let isInitialCategoryLoad = true;
 
     const unsubCategories = onSnapshot(categoriesRef, (snapshot) => {
@@ -182,10 +188,7 @@ export default function App() {
       setLoading(false);
     }, (error) => console.error(error));
 
-    return () => {
-      unsubCategories();
-      unsubNotes();
-    };
+    return () => { unsubCategories(); unsubNotes(); };
   }, [user]);
 
   const getCategoryDoc = (id) => doc(db, 'artifacts', appId, 'users', user.uid, 'categories', id);
@@ -217,11 +220,8 @@ export default function App() {
 
   const openAddModal = () => {
     setEditingNote(null);
-    setFormData({
-      title: '',
-      categoryId: activeCategoryId,
-      blocks: [{ id: generateId(), type: 'text', content: '', checked: false }]
-    });
+    setFormData({ title: '', categoryId: activeCategoryId, blocks: [{ id: generateId(), type: 'text', content: '', checked: false }] });
+    setActiveBlockId(null);
     setIsModalOpen(true);
   };
 
@@ -229,24 +229,18 @@ export default function App() {
     setEditingNote(note);
     const initialBlocks = note.blocks || [{ id: generateId(), type: 'text', content: note.content || '', checked: false }];
     setFormData({ ...note, blocks: initialBlocks });
+    setActiveBlockId(null);
     setIsModalOpen(true);
   };
 
   const saveNote = async (e) => {
     if (e) e.preventDefault();
     if (!formData.title.trim() || !user) return;
-
     if (editingNote) {
       await setDoc(getNoteDoc(editingNote.id), formData, { merge: true });
     } else {
       const newId = generateId();
-      await setDoc(getNoteDoc(newId), {
-        ...formData,
-        id: newId,
-        isCompleted: false,
-        createdAt: Date.now(),
-        order: Date.now()
-      });
+      await setDoc(getNoteDoc(newId), { ...formData, id: newId, isCompleted: false, createdAt: Date.now(), order: Date.now() });
     }
     setIsModalOpen(false);
   };
@@ -278,97 +272,64 @@ export default function App() {
     }
   };
 
+  // --- ドラッグ＆ドロップ ---
   const handleDragStart = (e, id) => {
-    e.dataTransfer.setData('noteId', id);
-    setDraggedNoteId(id);
-    setTimeout(() => {
-      const el = document.getElementById(`note-${id}`);
-      if (el) el.classList.add('opacity-40');
-    }, 0);
+    e.dataTransfer.setData('noteId', id); setDraggedNoteId(id);
+    setTimeout(() => { const el = document.getElementById(`note-${id}`); if (el) el.classList.add('opacity-40'); }, 0);
   };
-
   const handleDragEnd = (e, id) => {
-    setDraggedNoteId(null);
-    setDragOverNoteId(null);
-    setDragOverCategoryId(null);
-    const el = document.getElementById(`note-${id}`);
-    if (el) el.classList.remove('opacity-40');
+    setDraggedNoteId(null); setDragOverNoteId(null); setDragOverCategoryId(null);
+    const el = document.getElementById(`note-${id}`); if (el) el.classList.remove('opacity-40');
   };
-
-  const handleDragOverNote = (e, id) => {
-    e.preventDefault();
-    if (dragOverNoteId !== id && draggedNoteId !== id) setDragOverNoteId(id);
-  };
-
+  const handleDragOverNote = (e, id) => { e.preventDefault(); if (dragOverNoteId !== id && draggedNoteId !== id) setDragOverNoteId(id); };
   const handleDropOnNote = async (e, targetId) => {
-    e.preventDefault();
-    setDragOverNoteId(null);
+    e.preventDefault(); setDragOverNoteId(null);
     const sourceId = e.dataTransfer.getData('noteId');
     if (!sourceId || sourceId === targetId || !user) return;
-
     const categoryNotes = notes.filter(n => n.categoryId === activeCategoryId).sort((a,b) => a.order - b.order);
     const sourceIndex = categoryNotes.findIndex(n => n.id === sourceId);
     const targetIndex = categoryNotes.findIndex(n => n.id === targetId);
     if (sourceIndex === -1 || targetIndex === -1) return;
-
     const newCategoryNotes = [...categoryNotes];
     const [removed] = newCategoryNotes.splice(sourceIndex, 1);
     newCategoryNotes.splice(targetIndex, 0, removed);
-
-    const updatedNotes = newCategoryNotes.map((note, index) => ({
-      ...note,
-      order: index * 1000
-    }));
-
+    const updatedNotes = newCategoryNotes.map((note, index) => ({ ...note, order: index * 1000 }));
     setNotes(prev => {
       const otherNotes = prev.filter(n => n.categoryId !== activeCategoryId);
       return [...otherNotes, ...updatedNotes];
     });
-
-    for (const note of updatedNotes) {
-      await setDoc(getNoteDoc(note.id), { order: note.order }, { merge: true });
-    }
+    for (const note of updatedNotes) { await setDoc(getNoteDoc(note.id), { order: note.order }, { merge: true }); }
   };
-
-  const handleCategoryDragOver = (e, categoryId) => {
-    e.preventDefault();
-    if (categoryId !== activeCategoryId) setDragOverCategoryId(categoryId);
-  };
-
+  const handleCategoryDragOver = (e, categoryId) => { e.preventDefault(); if (categoryId !== activeCategoryId) setDragOverCategoryId(categoryId); };
   const handleCategoryDrop = async (e, targetCategoryId) => {
-    e.preventDefault();
-    setDragOverCategoryId(null);
+    e.preventDefault(); setDragOverCategoryId(null);
     const sourceId = e.dataTransfer.getData('noteId');
     if (!sourceId || targetCategoryId === activeCategoryId || !user) return;
-
     setNotes(notes.map(n => n.id === sourceId ? { ...n, categoryId: targetCategoryId, order: Date.now() } : n));
     await setDoc(getNoteDoc(sourceId), { categoryId: targetCategoryId, order: Date.now() }, { merge: true });
   };
 
-  // --- ブロックエディタ ---
+  // --- ブロックエディタ (挿入位置の改善) ---
   const addBlock = (type) => {
     const newId = generateId();
-    setFormData(prev => ({
-      ...prev,
-      blocks: [...prev.blocks, { id: newId, type, content: '', checked: false }]
-    }));
-    // 新しく追加したブロックにフォーカス＆スクロール
+    setFormData(prev => {
+      // 最後に操作したブロック(文中)を探し、その次に追加する
+      const activeIdx = prev.blocks.findIndex(b => b.id === activeBlockId);
+      const insertIdx = activeIdx !== -1 ? activeIdx + 1 : prev.blocks.length;
+      const newBlocks = [...prev.blocks];
+      newBlocks.splice(insertIdx, 0, { id: newId, type, content: '', checked: false });
+      return { ...prev, blocks: newBlocks };
+    });
+    // 追加した項目にフォーカスを当ててスクロール
     setTimeout(() => {
       const el = document.getElementById(`block-input-${newId}`);
-      if (el) {
-        el.focus();
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }, 10);
+      if (el) { el.focus(); ensureVisible(el); }
+    }, 50);
   };
 
   const updateBlock = (blockId, updates) => {
-    setFormData(prev => ({
-      ...prev,
-      blocks: prev.blocks.map(b => b.id === blockId ? { ...b, ...updates } : b)
-    }));
+    setFormData(prev => ({ ...prev, blocks: prev.blocks.map(b => b.id === blockId ? { ...b, ...updates } : b) }));
   };
-
   const removeBlock = (blockId) => {
     setFormData(prev => ({ ...prev, blocks: prev.blocks.filter(b => b.id !== blockId) }));
   };
@@ -388,7 +349,7 @@ export default function App() {
               prevInput.focus();
               const len = prevInput.value.length;
               prevInput.setSelectionRange(len, len);
-              prevInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+              ensureVisible(prevInput);
             }
           }, 10);
         }
@@ -405,25 +366,43 @@ export default function App() {
         setFormData({ ...formData, blocks: newBlocks });
         setTimeout(() => {
           const el = document.getElementById(`block-input-${newBlock.id}`);
-          if (el) {
-            el.focus();
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
+          if (el) { el.focus(); ensureVisible(el); }
         }, 10);
+      } else if (blockType === 'text') {
+        // テキストの改行時にも、確実にスクロールを追従させる
+        setTimeout(() => { handleTextareaResize(e); }, 10);
       }
     }
   };
 
+  // ★ 画像を「文中」に挿入し、続けてテキストが書けるようにする
   const handleImageSelect = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onloadend = async () => {
       const compressedUrl = await compressImage(reader.result);
-      setFormData(prev => ({
-        ...prev,
-        blocks: [...prev.blocks, { id: generateId(), type: 'image', content: compressedUrl }]
-      }));
+      const newImageId = generateId();
+      const newTextId = generateId();
+      
+      setFormData(prev => {
+        const activeIdx = prev.blocks.findIndex(b => b.id === activeBlockId);
+        const insertIdx = activeIdx !== -1 ? activeIdx + 1 : prev.blocks.length;
+        const newBlocks = [...prev.blocks];
+        
+        // 画像と、その直後の空テキストブロックをセットで文中に挿入
+        newBlocks.splice(insertIdx, 0, 
+          { id: newImageId, type: 'image', content: compressedUrl },
+          { id: newTextId, type: 'text', content: '', checked: false }
+        );
+        return { ...prev, blocks: newBlocks };
+      });
+      
+      // 画像挿入後、すぐ下の新しいテキスト入力欄にフォーカスを当てる
+      setTimeout(() => {
+        const el = document.getElementById(`block-input-${newTextId}`);
+        if (el) { el.focus(); ensureVisible(el); }
+      }, 50);
     };
     reader.readAsDataURL(file);
     e.target.value = null;
@@ -439,10 +418,22 @@ export default function App() {
         const reader = new FileReader();
         reader.onloadend = async () => {
           const compressedUrl = await compressImage(reader.result);
-          const newBlock = { id: generateId(), type: 'image', content: compressedUrl };
-          const newBlocks = [...formData.blocks];
-          newBlocks.splice(index + 1, 0, newBlock);
-          setFormData({ ...formData, blocks: newBlocks });
+          const newImageId = generateId();
+          const newTextId = generateId();
+          
+          setFormData(prev => {
+            const newBlocks = [...prev.blocks];
+            newBlocks.splice(index + 1, 0, 
+              { id: newImageId, type: 'image', content: compressedUrl },
+              { id: newTextId, type: 'text', content: '', checked: false }
+            );
+            return { ...prev, blocks: newBlocks };
+          });
+          
+          setTimeout(() => {
+            const el = document.getElementById(`block-input-${newTextId}`);
+            if (el) { el.focus(); ensureVisible(el); }
+          }, 50);
         };
         reader.readAsDataURL(file);
         break;
@@ -459,9 +450,6 @@ export default function App() {
         <div className="bg-white p-8 rounded-2xl shadow-lg max-w-lg w-full">
           <div className="w-16 h-16 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4"><AlertCircle className="w-8 h-8" /></div>
           <h2 className="text-xl font-bold mb-4 text-center">Firebaseの設定が完了していません</h2>
-          <div className="text-slate-600 mb-6 text-sm space-y-3 leading-relaxed">
-            <p>コード内の <code>firebaseConfig</code> が <code>"YOUR_API_KEY"</code> のままになっています。</p>
-          </div>
         </div>
       </div>
     );
@@ -473,14 +461,7 @@ export default function App() {
         <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center">
           <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-6 transform rotate-3"><CheckSquare className="w-10 h-10" /></div>
           <h1 className="text-3xl font-extrabold mb-2 text-slate-800">Kanban Notes</h1>
-          <p className="text-slate-500 mb-8 font-medium">どこからでも、あなたのアイデアにアクセス。</p>
-          <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-4 rounded-xl font-bold transition-all shadow-sm active:scale-[0.98]">
-            <svg className="w-6 h-6" viewBox="0 0 24 24">
-              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-            </svg>
+          <button onClick={handleGoogleLogin} className="mt-8 w-full flex items-center justify-center gap-3 bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-4 rounded-xl font-bold transition-all shadow-sm">
             Googleでログインして始める
           </button>
         </div>
@@ -520,18 +501,13 @@ export default function App() {
             </div>
             <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"><LogOut className="w-5 h-5" /></button>
             <div className="w-px h-6 bg-slate-200 mx-1"></div>
-            {/* 新規メモボタン：テキストを消してアイコンだけにスッキリと */}
-            <button 
-              onClick={() => openAddModal()} 
-              className="flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white w-10 h-10 rounded-lg transition-colors shadow-sm"
-              title="新規メモ"
-            >
+            <button onClick={() => openAddModal()} className="flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white w-10 h-10 rounded-lg transition-colors shadow-sm" title="新規メモ">
               <Plus className="w-6 h-6" />
             </button>
           </div>
         </div>
 
-        {/* カテゴリー（タブ）ナビゲーション */}
+        {/* カテゴリーナビゲーション */}
         <div className="px-4 sm:px-6 flex items-end gap-2 overflow-x-auto custom-scrollbar pb-0">
           {categories.map(category => (
             <div
@@ -541,33 +517,18 @@ export default function App() {
               onDragLeave={() => setDragOverCategoryId(null)}
               onDrop={(e) => handleCategoryDrop(e, category.id)}
               className={`flex items-center gap-2 px-3 sm:px-4 py-3 border-b-2 transition-all cursor-pointer whitespace-nowrap
-                ${activeCategoryId === category.id 
-                  ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50' 
-                  : dragOverCategoryId === category.id
-                    ? 'border-indigo-400 text-indigo-600 bg-indigo-50 scale-105'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-                }
+                ${activeCategoryId === category.id ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50' : dragOverCategoryId === category.id ? 'border-indigo-400 text-indigo-600 bg-indigo-50 scale-105' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'}
               `}
             >
               {editingCategoryId === category.id ? (
-                <input
-                  type="text"
-                  value={editingCategoryName}
-                  onChange={(e) => setEditingCategoryName(e.target.value)}
-                  onBlur={() => saveCategoryName(category.id)}
-                  onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)}
-                  autoFocus
-                  className="border border-indigo-300 rounded px-2 py-0.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white w-24 sm:w-32"
-                />
+                <input type="text" value={editingCategoryName} onChange={(e) => setEditingCategoryName(e.target.value)} onBlur={() => saveCategoryName(category.id)} onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)} autoFocus className="border border-indigo-300 rounded px-2 py-0.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white w-24 sm:w-32" />
               ) : (
                 <>
                   <span className="font-semibold text-sm select-none">{category.name}</span>
                   {activeCategoryId === category.id && (
                     <div className="flex items-center ml-1">
                       <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }} className="p-1 text-slate-400 hover:text-indigo-600 transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
-                      {categories.length > 1 && (
-                        <button onClick={(e) => { e.stopPropagation(); handleDeleteCategory(category.id); }} className="p-1 text-slate-400 hover:text-red-500 transition-colors rounded"><X className="w-3.5 h-3.5" /></button>
-                      )}
+                      {categories.length > 1 && <button onClick={(e) => { e.stopPropagation(); handleDeleteCategory(category.id); }} className="p-1 text-slate-400 hover:text-red-500 transition-colors rounded"><X className="w-3.5 h-3.5" /></button>}
                     </div>
                   )}
                 </>
@@ -586,7 +547,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* メインボード (スマホ縦画面で2列表示: columns-2) */}
+      {/* メインボード */}
       <main className="flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="max-w-7xl mx-auto h-full">
           {activeNotes.length === 0 ? (
@@ -619,20 +580,14 @@ export default function App() {
                         <img src={firstImageBlock.content} alt="サムネイル" className="max-w-full max-h-full object-cover" />
                       </div>
                     )}
-
                     <div className="flex items-start justify-between gap-1 sm:gap-2 mb-2">
                       <h3 className={`font-semibold leading-snug line-clamp-2 pr-5 sm:pr-6 text-sm sm:text-base ${note.isCompleted ? 'text-slate-500 line-through' : 'text-slate-800'}`}>
                         {note.title}
                       </h3>
-                      <button
-                        onClick={(e) => toggleComplete(e, note.id)}
-                        className={`absolute top-2 right-2 sm:top-3 sm:right-3 transition-colors p-0.5 sm:p-1 rounded-full shadow-sm border z-10
-                          ${note.isCompleted ? 'text-green-500 bg-green-50 border-green-200 hover:bg-green-100' : 'text-slate-300 bg-white border-slate-100 hover:text-green-500 hover:border-green-300'}`}
-                      >
+                      <button onClick={(e) => toggleComplete(e, note.id)} className={`absolute top-2 right-2 sm:top-3 sm:right-3 transition-colors p-0.5 sm:p-1 rounded-full shadow-sm border z-10 ${note.isCompleted ? 'text-green-500 bg-green-50 border-green-200' : 'text-slate-300 bg-white border-slate-100'}`}>
                         {note.isCompleted ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : <Circle className="w-4 h-4 sm:w-5 sm:h-5" />}
                       </button>
                     </div>
-
                     <div className="relative overflow-hidden max-h-96 rounded-b-lg">
                       <div className="space-y-0 text-xs sm:text-[15px] pb-6">
                         {note.blocks?.map(block => (
@@ -640,16 +595,12 @@ export default function App() {
                             {block.type === 'text' && <div className={`whitespace-pre-wrap leading-relaxed ${note.isCompleted ? 'text-slate-400' : 'text-slate-600'}`}>{block.content}</div>}
                             {block.type === 'list' && (
                               <div className={`flex items-start gap-1 sm:gap-1.5 leading-relaxed ${note.isCompleted ? 'text-slate-400' : 'text-slate-700'}`}>
-                                <span className="text-slate-400 font-bold mt-0.5 shrink-0">•</span>
-                                <span>{block.content}</span>
+                                <span className="text-slate-400 font-bold mt-0.5 shrink-0">•</span><span>{block.content}</span>
                               </div>
                             )}
                             {block.type === 'checkbox' && (
                               <div className="flex items-start gap-1.5 sm:gap-2 cursor-pointer group/check leading-relaxed" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
-                                {block.checked 
-                                  ? <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-500 mt-0.5 flex-shrink-0 group-hover/check:opacity-70" /> 
-                                  : <Circle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 mt-0.5 flex-shrink-0 group-hover/check:text-indigo-400" />
-                                }
+                                {block.checked ? <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-500 mt-0.5 flex-shrink-0" /> : <Circle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 mt-0.5 flex-shrink-0" />}
                                 <span className={`${block.checked || note.isCompleted ? 'line-through text-slate-400' : 'text-slate-700'} leading-snug`}>{block.content}</span>
                               </div>
                             )}
@@ -672,41 +623,21 @@ export default function App() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 z-50">
           <div className="bg-white sm:rounded-2xl shadow-2xl w-full max-w-2xl h-full sm:h-[95vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
             
-            {/* ヘッダー＆ツールバー統合（上部固定） */}
+            {/* ヘッダー＆ツールバー */}
             <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-200 bg-slate-50 sm:rounded-t-2xl shrink-0 flex flex-col gap-3 shadow-sm z-10 relative">
-              
-              {/* 上段：タイトル・カテゴリー・削除/閉じる */}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex-1 flex items-center gap-2">
-                  <input 
-                    type="text" 
-                    required 
-                    value={formData.title} 
-                    onChange={(e) => setFormData({ ...formData, title: e.target.value })} 
-                    className="flex-1 px-1 py-1 text-lg sm:text-xl font-bold text-slate-800 bg-transparent border-b-2 border-transparent hover:border-slate-300 focus:border-indigo-500 outline-none transition-colors placeholder:text-slate-400" 
-                    placeholder="タイトル" 
-                  />
-                  <select 
-                    value={formData.categoryId} 
-                    onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} 
-                    className="w-28 sm:w-40 px-2 sm:px-3 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-xs sm:text-sm text-slate-600 shrink-0"
-                  >
+                  <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 px-1 py-1 text-lg sm:text-xl font-bold text-slate-800 bg-transparent border-b-2 border-transparent hover:border-slate-300 focus:border-indigo-500 outline-none transition-colors placeholder:text-slate-400" placeholder="タイトル" />
+                  <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-28 sm:w-40 px-2 sm:px-3 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-xs sm:text-sm text-slate-600 shrink-0">
                     {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {editingNote && (
-                    <button type="button" onClick={() => deleteNote(editingNote.id)} className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-colors" title="削除">
-                      <Trash2 className="w-5 h-5" />
-                    </button>
-                  )}
-                  <button type="button" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:bg-slate-200 p-1.5 rounded-lg transition-colors" title="閉じる">
-                    <X className="w-5 h-5" />
-                  </button>
+                  {editingNote && <button type="button" onClick={() => deleteNote(editingNote.id)} className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-colors"><Trash2 className="w-5 h-5" /></button>}
+                  <button type="button" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:bg-slate-200 p-1.5 rounded-lg transition-colors"><X className="w-5 h-5" /></button>
                 </div>
               </div>
 
-              {/* 下段：追加ブロックアイコン ＆ キャンセル/保存ボタン */}
               <div className="flex items-center justify-between pt-1">
                 <div className="flex items-center gap-1 sm:gap-2">
                   <button type="button" onClick={() => addBlock('text')} title="テキストを追加" className="p-1.5 sm:p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-100 rounded-lg transition-all"><AlignLeft className="w-5 h-5" /></button>
@@ -717,20 +648,17 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-2 sm:gap-3">
                   <button type="button" onClick={() => setIsModalOpen(false)} className="px-3 py-1.5 sm:px-4 sm:py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors text-xs sm:text-sm">キャンセル</button>
-                  <button type="button" onClick={saveNote} className="px-3 py-1.5 sm:px-5 sm:py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors shadow-sm flex items-center gap-1.5 text-xs sm:text-sm">
-                    <Check className="w-4 h-4" /> 保存
-                  </button>
+                  <button type="button" onClick={saveNote} className="px-3 py-1.5 sm:px-5 sm:py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors shadow-sm flex items-center gap-1.5 text-xs sm:text-sm"><Check className="w-4 h-4" /> 保存</button>
                 </div>
               </div>
             </div>
 
-            {/* エディタ部分：フッターがなくなったため、下部まで完全にフリー */}
+            {/* エディタ部分 */}
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-4 sm:pt-6 pb-[50vh] custom-scrollbar flex flex-col relative bg-white sm:rounded-b-2xl">
               <div className="flex-1 relative">
                 <div className="space-y-0">
                   {formData.blocks?.map((block, index) => (
                     <div key={block.id} className="flex items-start group relative">
-                      
                       <div className={`flex justify-center shrink-0 ${block.type === 'text' ? 'w-1 sm:w-0' : 'w-6 sm:w-7 pt-[6px]'}`}> 
                         {block.type === 'list' && <div className="text-slate-400 font-bold text-lg">•</div>}
                         {block.type === 'checkbox' && (
@@ -742,8 +670,8 @@ export default function App() {
 
                       <div className="flex-1 pl-1 pr-6 sm:pr-8">
                         {block.type === 'image' ? (
-                          <div className="relative inline-block my-2">
-                            <img src={block.content} alt="添付画像" className="max-w-full h-auto rounded-lg border border-slate-200" />
+                          <div className="relative inline-block my-2 w-full">
+                            <img src={block.content} alt="添付画像" className="max-w-full max-h-[400px] object-contain rounded-lg border border-slate-200" />
                           </div>
                         ) : (
                           <textarea
@@ -753,8 +681,9 @@ export default function App() {
                             onKeyDown={(e) => handleKeyDown(e, index, block.type)}
                             onPaste={(e) => handlePaste(e, index)}
                             onFocus={(e) => {
-                              // フォーカス時にも確実に見えるようにスクロール
-                              requestAnimationFrame(() => e.target.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+                              setActiveBlockId(block.id);
+                              // キーボードの表示アニメーションを待ってからスクロール補正
+                              setTimeout(() => ensureVisible(e.target), 300);
                             }}
                             className={`w-full bg-transparent resize-none outline-none py-0.5 m-0 leading-relaxed overflow-hidden min-h-[28px]
                               ${block.type === 'checkbox' && block.checked ? 'text-slate-400 line-through' : 'text-slate-800'} text-sm sm:text-[15px]`}
