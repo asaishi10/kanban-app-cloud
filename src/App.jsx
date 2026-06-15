@@ -77,11 +77,20 @@ export default function App() {
   const [dragOverNoteId, setDragOverNoteId] = useState(null);
   const [dragOverCategoryId, setDragOverCategoryId] = useState(null);
 
-  // ★ 追加: 現在カーソルが当たっているブロックIDを記録（文中への挿入用）
+  // カーソル位置を記憶して、テキスト途中に要素を挿入するためのRef
   const [activeBlockId, setActiveBlockId] = useState(null);
+  const activeBlockInfoRef = useRef({ id: null, cursorPosition: 0 });
+
+  const saveCursorPosition = (e, blockId) => {
+    activeBlockInfoRef.current = {
+      id: blockId,
+      cursorPosition: e.target.selectionStart || 0
+    };
+    setActiveBlockId(blockId);
+  };
 
   // ==========================================
-  // テキストエリアの自動リサイズ & 確実なスクロール
+  // テキストエリアのリサイズ処理
   // ==========================================
   useEffect(() => {
     if (isModalOpen) {
@@ -95,40 +104,11 @@ export default function App() {
     }
   }, [isModalOpen, formData.blocks]);
 
-  // ★ 確実に入力行を画面に表示させる強力なスクロール関数
-  const ensureVisible = (element) => {
-    if (!element) return;
-    requestAnimationFrame(() => {
-      const container = element.closest('.overflow-y-auto');
-      if (!container) return;
-      
-      const rect = element.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
-      
-      // スマホのキーボードが被ることを想定し、画面下から180pxは「見えないエリア」として扱う
-      const safeBottom = containerRect.bottom - 180; 
-      const safeTop = containerRect.top + 80;
-      
-      if (rect.bottom > safeBottom) {
-        container.scrollTo({
-          top: container.scrollTop + (rect.bottom - safeBottom),
-          behavior: 'smooth'
-        });
-      } else if (rect.top < safeTop) {
-        container.scrollTo({
-          top: container.scrollTop - (safeTop - rect.top),
-          behavior: 'smooth'
-        });
-      }
-    });
-  };
-
   const handleTextareaResize = (e) => {
     const el = e.target;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
-    // 改行等で高さが変わった瞬間に見える位置へスクロール
-    ensureVisible(el);
+    // 無理なスクロール補正を廃止し、ブラウザの自然な追従に任せます
   };
 
   // ==========================================
@@ -150,7 +130,7 @@ export default function App() {
     } catch (error) {
       console.error("Login error", error);
       if (error.code === 'auth/unauthorized-domain') {
-        alert(`【ドメイン未登録エラー】\n\nセキュリティ設定によりログインがブロックされました。\nFirebase Console の「Authentication」>「設定」>「承認済みドメイン」に以下のドメインを追加してください:\n\n${window.location.hostname}`);
+        alert(`【ドメイン未登録エラー】\n\nFirebase Console にて承認済みドメインを追加してください:\n\n${window.location.hostname}`);
       } else {
         alert("ログインに失敗しました。もう一度お試しください。");
       }
@@ -221,6 +201,7 @@ export default function App() {
   const openAddModal = () => {
     setEditingNote(null);
     setFormData({ title: '', categoryId: activeCategoryId, blocks: [{ id: generateId(), type: 'text', content: '', checked: false }] });
+    activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
     setIsModalOpen(true);
   };
@@ -229,6 +210,7 @@ export default function App() {
     setEditingNote(note);
     const initialBlocks = note.blocks || [{ id: generateId(), type: 'text', content: note.content || '', checked: false }];
     setFormData({ ...note, blocks: initialBlocks });
+    activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
     setIsModalOpen(true);
   };
@@ -272,7 +254,6 @@ export default function App() {
     }
   };
 
-  // --- ドラッグ＆ドロップ ---
   const handleDragStart = (e, id) => {
     e.dataTransfer.setData('noteId', id); setDraggedNoteId(id);
     setTimeout(() => { const el = document.getElementById(`note-${id}`); if (el) el.classList.add('opacity-40'); }, 0);
@@ -309,22 +290,56 @@ export default function App() {
     await setDoc(getNoteDoc(sourceId), { categoryId: targetCategoryId, order: Date.now() }, { merge: true });
   };
 
-  // --- ブロックエディタ (挿入位置の改善) ---
+  // --- ブロックエディタ（文中への分割挿入対応） ---
   const addBlock = (type) => {
-    const newId = generateId();
     setFormData(prev => {
-      // 最後に操作したブロック(文中)を探し、その次に追加する
-      const activeIdx = prev.blocks.findIndex(b => b.id === activeBlockId);
-      const insertIdx = activeIdx !== -1 ? activeIdx + 1 : prev.blocks.length;
-      const newBlocks = [...prev.blocks];
-      newBlocks.splice(insertIdx, 0, { id: newId, type, content: '', checked: false });
-      return { ...prev, blocks: newBlocks };
+      const { id: targetId, cursorPosition } = activeBlockInfoRef.current;
+      const activeIdx = prev.blocks.findIndex(b => b.id === targetId);
+
+      // テキストブロックの途中に挿入する場合
+      if (activeIdx !== -1 && prev.blocks[activeIdx].type === 'text') {
+        const targetBlock = prev.blocks[activeIdx];
+        const textBefore = targetBlock.content.substring(0, cursorPosition);
+        const textAfter = targetBlock.content.substring(cursorPosition);
+
+        const newBlockId = generateId();
+        const newTextId = generateId();
+        const newBlocks = [...prev.blocks];
+
+        newBlocks[activeIdx] = { ...targetBlock, content: textBefore };
+        newBlocks.splice(activeIdx + 1, 0, 
+          { id: newBlockId, type, content: '', checked: false },
+          { id: newTextId, type: 'text', content: textAfter, checked: false }
+        );
+
+        setTimeout(() => {
+          const el = document.getElementById(`block-input-${newBlockId}`);
+          if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+        }, 50);
+
+        activeBlockInfoRef.current = { id: newBlockId, cursorPosition: 0 };
+        setActiveBlockId(newBlockId);
+
+        return { ...prev, blocks: newBlocks };
+      } 
+      // それ以外（テキスト以外を選択中、または未選択）の場合
+      else {
+        const newId = generateId();
+        const insertIdx = activeIdx !== -1 ? activeIdx + 1 : prev.blocks.length;
+        const newBlocks = [...prev.blocks];
+        newBlocks.splice(insertIdx, 0, { id: newId, type, content: '', checked: false });
+        
+        setTimeout(() => {
+          const el = document.getElementById(`block-input-${newId}`);
+          if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+        }, 50);
+
+        activeBlockInfoRef.current = { id: newId, cursorPosition: 0 };
+        setActiveBlockId(newId);
+
+        return { ...prev, blocks: newBlocks };
+      }
     });
-    // 追加した項目にフォーカスを当ててスクロール
-    setTimeout(() => {
-      const el = document.getElementById(`block-input-${newId}`);
-      if (el) { el.focus(); ensureVisible(el); }
-    }, 50);
   };
 
   const updateBlock = (blockId, updates) => {
@@ -343,15 +358,18 @@ export default function App() {
       if (formData.blocks.length > 1) {
         removeBlock(formData.blocks[index].id);
         if (index > 0) {
+          const prevBlock = formData.blocks[index - 1];
           setTimeout(() => {
-            const prevInput = document.getElementById(`block-input-${formData.blocks[index - 1].id}`);
+            const prevInput = document.getElementById(`block-input-${prevBlock.id}`);
             if (prevInput) {
               prevInput.focus();
               const len = prevInput.value.length;
               prevInput.setSelectionRange(len, len);
-              ensureVisible(prevInput);
+              prevInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
           }, 10);
+          activeBlockInfoRef.current = { id: prevBlock.id, cursorPosition: prevBlock.content.length };
+          setActiveBlockId(prevBlock.id);
         }
       }
       return;
@@ -360,49 +378,84 @@ export default function App() {
     if (e.key === 'Enter' && !e.shiftKey) {
       if (blockType === 'list' || blockType === 'checkbox') {
         e.preventDefault();
-        const newBlock = { id: generateId(), type: blockType, content: '', checked: false };
+        const newId = generateId();
+        const newBlock = { id: newId, type: blockType, content: '', checked: false };
         const newBlocks = [...formData.blocks];
         newBlocks.splice(index + 1, 0, newBlock);
         setFormData({ ...formData, blocks: newBlocks });
+        
         setTimeout(() => {
-          const el = document.getElementById(`block-input-${newBlock.id}`);
-          if (el) { el.focus(); ensureVisible(el); }
+          const el = document.getElementById(`block-input-${newId}`);
+          if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
         }, 10);
-      } else if (blockType === 'text') {
-        // テキストの改行時にも、確実にスクロールを追従させる
-        setTimeout(() => { handleTextareaResize(e); }, 10);
+        
+        activeBlockInfoRef.current = { id: newId, cursorPosition: 0 };
+        setActiveBlockId(newId);
       }
     }
   };
 
-  // ★ 画像を「文中」に挿入し、続けてテキストが書けるようにする
   const handleImageSelect = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onloadend = async () => {
       const compressedUrl = await compressImage(reader.result);
-      const newImageId = generateId();
-      const newTextId = generateId();
       
       setFormData(prev => {
-        const activeIdx = prev.blocks.findIndex(b => b.id === activeBlockId);
-        const insertIdx = activeIdx !== -1 ? activeIdx + 1 : prev.blocks.length;
-        const newBlocks = [...prev.blocks];
-        
-        // 画像と、その直後の空テキストブロックをセットで文中に挿入
-        newBlocks.splice(insertIdx, 0, 
-          { id: newImageId, type: 'image', content: compressedUrl },
-          { id: newTextId, type: 'text', content: '', checked: false }
-        );
-        return { ...prev, blocks: newBlocks };
+        const { id: targetId, cursorPosition } = activeBlockInfoRef.current;
+        const activeIdx = prev.blocks.findIndex(b => b.id === targetId);
+
+        // テキストの途中に挿入する場合
+        if (activeIdx !== -1 && prev.blocks[activeIdx].type === 'text') {
+          const targetBlock = prev.blocks[activeIdx];
+          const textBefore = targetBlock.content.substring(0, cursorPosition);
+          const textAfter = targetBlock.content.substring(cursorPosition);
+
+          const newImageId = generateId();
+          const newTextId = generateId();
+          const newBlocks = [...prev.blocks];
+
+          newBlocks[activeIdx] = { ...targetBlock, content: textBefore };
+          newBlocks.splice(activeIdx + 1, 0, 
+            { id: newImageId, type: 'image', content: compressedUrl },
+            { id: newTextId, type: 'text', content: textAfter, checked: false }
+          );
+
+          // 画像の後のテキストエリアにフォーカス
+          setTimeout(() => {
+            const el = document.getElementById(`block-input-${newTextId}`);
+            if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+          }, 50);
+
+          activeBlockInfoRef.current = { id: newTextId, cursorPosition: 0 };
+          setActiveBlockId(newTextId);
+
+          return { ...prev, blocks: newBlocks };
+        } 
+        // それ以外の場合
+        else {
+          const newImageId = generateId();
+          const newTextId = generateId();
+          const insertIdx = activeIdx !== -1 ? activeIdx + 1 : prev.blocks.length;
+          const newBlocks = [...prev.blocks];
+          
+          newBlocks.splice(insertIdx, 0, 
+            { id: newImageId, type: 'image', content: compressedUrl },
+            { id: newTextId, type: 'text', content: '', checked: false }
+          );
+          
+          setTimeout(() => {
+            const el = document.getElementById(`block-input-${newTextId}`);
+            if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+          }, 50);
+
+          activeBlockInfoRef.current = { id: newTextId, cursorPosition: 0 };
+          setActiveBlockId(newTextId);
+
+          return { ...prev, blocks: newBlocks };
+        }
       });
-      
-      // 画像挿入後、すぐ下の新しいテキスト入力欄にフォーカスを当てる
-      setTimeout(() => {
-        const el = document.getElementById(`block-input-${newTextId}`);
-        if (el) { el.focus(); ensureVisible(el); }
-      }, 50);
     };
     reader.readAsDataURL(file);
     e.target.value = null;
@@ -418,22 +471,54 @@ export default function App() {
         const reader = new FileReader();
         reader.onloadend = async () => {
           const compressedUrl = await compressImage(reader.result);
-          const newImageId = generateId();
-          const newTextId = generateId();
           
           setFormData(prev => {
-            const newBlocks = [...prev.blocks];
-            newBlocks.splice(index + 1, 0, 
-              { id: newImageId, type: 'image', content: compressedUrl },
-              { id: newTextId, type: 'text', content: '', checked: false }
-            );
-            return { ...prev, blocks: newBlocks };
+            const cursorPosition = e.target.selectionStart || 0;
+            const targetBlock = prev.blocks[index];
+
+            if (targetBlock.type === 'text') {
+              const textBefore = targetBlock.content.substring(0, cursorPosition);
+              const textAfter = targetBlock.content.substring(cursorPosition);
+
+              const newImageId = generateId();
+              const newTextId = generateId();
+              const newBlocks = [...prev.blocks];
+
+              newBlocks[index] = { ...targetBlock, content: textBefore };
+              newBlocks.splice(index + 1, 0, 
+                { id: newImageId, type: 'image', content: compressedUrl },
+                { id: newTextId, type: 'text', content: textAfter, checked: false }
+              );
+
+              setTimeout(() => {
+                const el = document.getElementById(`block-input-${newTextId}`);
+                if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+              }, 50);
+
+              activeBlockInfoRef.current = { id: newTextId, cursorPosition: 0 };
+              setActiveBlockId(newTextId);
+
+              return { ...prev, blocks: newBlocks };
+            } else {
+               const newImageId = generateId();
+               const newTextId = generateId();
+               const newBlocks = [...prev.blocks];
+               newBlocks.splice(index + 1, 0, 
+                 { id: newImageId, type: 'image', content: compressedUrl },
+                 { id: newTextId, type: 'text', content: '', checked: false }
+               );
+               
+               setTimeout(() => {
+                 const el = document.getElementById(`block-input-${newTextId}`);
+                 if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+               }, 50);
+
+               activeBlockInfoRef.current = { id: newTextId, cursorPosition: 0 };
+               setActiveBlockId(newTextId);
+
+               return { ...prev, blocks: newBlocks };
+            }
           });
-          
-          setTimeout(() => {
-            const el = document.getElementById(`block-input-${newTextId}`);
-            if (el) { el.focus(); ensureVisible(el); }
-          }, 50);
         };
         reader.readAsDataURL(file);
         break;
@@ -677,14 +762,11 @@ export default function App() {
                           <textarea
                             id={`block-input-${block.id}`}
                             value={block.content}
-                            onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); }}
-                            onKeyDown={(e) => handleKeyDown(e, index, block.type)}
-                            onPaste={(e) => handlePaste(e, index)}
-                            onFocus={(e) => {
-                              setActiveBlockId(block.id);
-                              // キーボードの表示アニメーションを待ってからスクロール補正
-                              setTimeout(() => ensureVisible(e.target), 300);
-                            }}
+                            onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); saveCursorPosition(e, block.id); }}
+                            onKeyDown={(e) => { handleKeyDown(e, index, block.type); saveCursorPosition(e, block.id); }}
+                            onKeyUp={(e) => saveCursorPosition(e, block.id)}
+                            onClick={(e) => saveCursorPosition(e, block.id)}
+                            onFocus={(e) => saveCursorPosition(e, block.id)}
                             className={`w-full bg-transparent resize-none outline-none py-0.5 m-0 leading-relaxed overflow-hidden min-h-[28px]
                               ${block.type === 'checkbox' && block.checked ? 'text-slate-400 line-through' : 'text-slate-800'} text-sm sm:text-[15px]`}
                             rows={1}
