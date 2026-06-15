@@ -81,38 +81,39 @@ export default function App() {
   // ドラッグ＆ドロップ管理
   const [draggedNoteId, setDraggedNoteId] = useState(null);
   const [dragOverNoteId, setDragOverNoteId] = useState(null);
+  const [dragOverCategoryId, setDragOverCategoryId] = useState(null); // タブへのD&D用
 
   // ==========================================
-  // Firebase の初期化とデータ同期 (useEffect)
+  // Firebase の初期化とデータ同期
   // ==========================================
 
-  // 1. 認証（ログイン）処理
   useEffect(() => {
     if (!isConfigValid) return;
 
-    // ログイン状態の監視
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (!currentUser) {
-        setLoading(false); // ログアウト状態ならローディングを解除してログイン画面を出す
+        setLoading(false);
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // Googleログイン処理
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
       await signInWithPopup(auth, provider);
     } catch (error) {
       console.error("Login error", error);
-      alert("ログインに失敗しました。もう一度お試しください。");
+      if (error.code === 'auth/unauthorized-domain') {
+        alert(`【ドメイン未登録エラー】\n\nセキュリティ設定によりログインがブロックされました。\nFirebase Console の「Authentication」>「設定」>「承認済みドメイン」に以下のドメインを追加してください:\n\n${window.location.hostname}`);
+      } else {
+        alert("ログインに失敗しました。もう一度お試しください。");
+      }
       setLoading(false);
     }
   };
 
-  // ログアウト処理
   const handleLogout = async () => {
     try {
       await signOut(auth);
@@ -121,7 +122,6 @@ export default function App() {
     }
   };
 
-  // 2. クラウドデータベースとの同期
   useEffect(() => {
     if (!user || !isConfigValid) {
       setCategories([]);
@@ -134,11 +134,8 @@ export default function App() {
 
     let isInitialCategoryLoad = true;
 
-    // カテゴリーの同期
     const unsubCategories = onSnapshot(categoriesRef, (snapshot) => {
       const loadedCategories = snapshot.docs.map(d => d.data()).sort((a, b) => a.createdAt - b.createdAt);
-      
-      // 初回起動時、カテゴリーが1つもなければ自動作成する
       if (loadedCategories.length === 0 && isInitialCategoryLoad) {
         const defaultId = generateId();
         setDoc(doc(categoriesRef, defaultId), {
@@ -153,11 +150,10 @@ export default function App() {
       isInitialCategoryLoad = false;
     }, (error) => console.error(error));
 
-    // メモの同期
     const unsubNotes = onSnapshot(notesRef, (snapshot) => {
       const loadedNotes = snapshot.docs.map(d => d.data()).sort((a, b) => a.order - b.order);
       setNotes(loadedNotes);
-      setLoading(false); // データ読み込み完了
+      setLoading(false);
     }, (error) => console.error(error));
 
     return () => {
@@ -166,15 +162,13 @@ export default function App() {
     };
   }, [user]);
 
-  // Firestoreドキュメントの参照ヘルパー
   const getCategoryDoc = (id) => doc(db, 'artifacts', appId, 'users', user.uid, 'categories', id);
   const getNoteDoc = (id) => doc(db, 'artifacts', appId, 'users', user.uid, 'notes', id);
 
   // ==========================================
-  // クラウド同期対応の各操作アクション
+  // 操作アクション
   // ==========================================
 
-  // --- カテゴリー操作 ---
   const handleAddCategory = async () => {
     if (!user) return;
     const newId = generateId();
@@ -196,7 +190,6 @@ export default function App() {
     await deleteDoc(getCategoryDoc(id));
   };
 
-  // --- メモ操作 ---
   const openAddModal = () => {
     setEditingNote(null);
     setFormData({
@@ -227,7 +220,7 @@ export default function App() {
         id: newId,
         isCompleted: false,
         createdAt: Date.now(),
-        order: Date.now() // 新規追加は一番後ろにする
+        order: Date.now()
       });
     }
     setIsModalOpen(false);
@@ -244,9 +237,7 @@ export default function App() {
     if (!user) return;
     const note = notes.find(n => n.id === id);
     if (note) {
-      // 楽観的UI更新（すぐに切り替える）
       setNotes(notes.map(n => n.id === id ? { ...n, isCompleted: !n.isCompleted } : n));
-      // クラウド同期
       await setDoc(getNoteDoc(id), { isCompleted: !note.isCompleted }, { merge: true });
     }
   };
@@ -257,12 +248,12 @@ export default function App() {
     const note = notes.find(n => n.id === noteId);
     if (note) {
       const newBlocks = note.blocks.map(b => b.id === blockId ? { ...b, checked: !b.checked } : b);
-      setNotes(notes.map(n => n.id === noteId ? { ...n, blocks: newBlocks } : n)); // 楽観的更新
-      await setDoc(getNoteDoc(noteId), { blocks: newBlocks }, { merge: true }); // クラウド同期
+      setNotes(notes.map(n => n.id === noteId ? { ...n, blocks: newBlocks } : n));
+      await setDoc(getNoteDoc(noteId), { blocks: newBlocks }, { merge: true });
     }
   };
 
-  // --- ドラッグ＆ドロップ処理（並び替え） ---
+  // --- ドラッグ＆ドロップ（メモ並べ替え ＆ カテゴリー間移動） ---
   const handleDragStart = (e, id) => {
     e.dataTransfer.setData('noteId', id);
     setDraggedNoteId(id);
@@ -275,22 +266,20 @@ export default function App() {
   const handleDragEnd = (e, id) => {
     setDraggedNoteId(null);
     setDragOverNoteId(null);
+    setDragOverCategoryId(null);
     const el = document.getElementById(`note-${id}`);
     if (el) el.classList.remove('opacity-40');
   };
 
-  const handleDragOver = (e, id) => {
+  // メモ同士のドロップ
+  const handleDragOverNote = (e, id) => {
     e.preventDefault();
     if (dragOverNoteId !== id && draggedNoteId !== id) {
       setDragOverNoteId(id);
     }
   };
 
-  const handleDragLeave = (e, id) => {
-    if (dragOverNoteId === id) setDragOverNoteId(null);
-  };
-
-  const handleDrop = async (e, targetId) => {
+  const handleDropOnNote = async (e, targetId) => {
     e.preventDefault();
     setDragOverNoteId(null);
     const sourceId = e.dataTransfer.getData('noteId');
@@ -299,33 +288,49 @@ export default function App() {
     const categoryNotes = notes.filter(n => n.categoryId === activeCategoryId).sort((a,b) => a.order - b.order);
     const sourceIndex = categoryNotes.findIndex(n => n.id === sourceId);
     const targetIndex = categoryNotes.findIndex(n => n.id === targetId);
-    
     if (sourceIndex === -1 || targetIndex === -1) return;
 
-    // 配列の並び替え
     const newCategoryNotes = [...categoryNotes];
     const [removed] = newCategoryNotes.splice(sourceIndex, 1);
     newCategoryNotes.splice(targetIndex, 0, removed);
 
-    // 新しい順序番号（order）を割り当てる
     const updatedNotes = newCategoryNotes.map((note, index) => ({
       ...note,
-      order: index * 1000 // 隙間を空けて保存（計算を簡略化するため）
+      order: index * 1000
     }));
 
-    // 楽観的UI更新（画面上はすぐに並び替える）
     setNotes(prev => {
       const otherNotes = prev.filter(n => n.categoryId !== activeCategoryId);
       return [...otherNotes, ...updatedNotes];
     });
 
-    // 全ての変更をクラウドに保存
     for (const note of updatedNotes) {
       await setDoc(getNoteDoc(note.id), { order: note.order }, { merge: true });
     }
   };
 
-  // --- ブロックエディタ・画像関連 ---
+  // カテゴリータブへのドロップ
+  const handleCategoryDragOver = (e, categoryId) => {
+    e.preventDefault();
+    if (categoryId !== activeCategoryId) {
+      setDragOverCategoryId(categoryId);
+    }
+  };
+
+  const handleCategoryDrop = async (e, targetCategoryId) => {
+    e.preventDefault();
+    setDragOverCategoryId(null);
+    const sourceId = e.dataTransfer.getData('noteId');
+    
+    if (!sourceId || targetCategoryId === activeCategoryId || !user) return;
+
+    // カテゴリーIDを書き換えて保存（別カテゴリーへ移動）
+    setNotes(notes.map(n => n.id === sourceId ? { ...n, categoryId: targetCategoryId, order: Date.now() } : n));
+    await setDoc(getNoteDoc(sourceId), { categoryId: targetCategoryId, order: Date.now() }, { merge: true });
+  };
+
+
+  // --- ブロックエディタ ---
   const addBlock = (type) => {
     setFormData(prev => ({
       ...prev,
@@ -352,9 +357,11 @@ export default function App() {
   const handleKeyDown = (e, index, blockType) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key === 'Enter' && !e.shiftKey) {
-      if (blockType === 'list' || blockType === 'checkbox') {
+      if (blockType === 'list' || blockType === 'checkbox' || blockType === 'text') {
         e.preventDefault();
-        const newBlock = { id: generateId(), type: blockType, content: '', checked: false };
+        // テキストブロックでもEnterで新しいテキストブロックを作ることでシームレスに見せる
+        const newType = blockType === 'text' ? 'text' : blockType;
+        const newBlock = { id: generateId(), type: newType, content: '', checked: false };
         const newBlocks = [...formData.blocks];
         newBlocks.splice(index + 1, 0, newBlock);
         setFormData({ ...formData, blocks: newBlocks });
@@ -363,8 +370,10 @@ export default function App() {
     }
     if (e.key === 'Backspace' && formData.blocks[index].content === '') {
       e.preventDefault();
-      removeBlock(formData.blocks[index].id);
-      if (index > 0) document.getElementById(`block-input-${formData.blocks[index - 1].id}`)?.focus();
+      if (formData.blocks.length > 1) {
+        removeBlock(formData.blocks[index].id);
+        if (index > 0) document.getElementById(`block-input-${formData.blocks[index - 1].id}`)?.focus();
+      }
     }
   };
 
@@ -373,7 +382,7 @@ export default function App() {
     if (!file) return;
     const reader = new FileReader();
     reader.onloadend = async () => {
-      const compressedUrl = await compressImage(reader.result); // クラウド保存用に圧縮
+      const compressedUrl = await compressImage(reader.result);
       setFormData(prev => ({
         ...prev,
         blocks: [...prev.blocks, { id: generateId(), type: 'image', content: compressedUrl }]
@@ -392,7 +401,7 @@ export default function App() {
         const file = items[i].getAsFile();
         const reader = new FileReader();
         reader.onloadend = async () => {
-          const compressedUrl = await compressImage(reader.result); // クラウド保存用に圧縮
+          const compressedUrl = await compressImage(reader.result);
           const newBlock = { id: generateId(), type: 'image', content: compressedUrl };
           const newBlocks = [...formData.blocks];
           newBlocks.splice(index + 1, 0, newBlock);
@@ -404,49 +413,32 @@ export default function App() {
     }
   };
 
+  // ==========================================
+  // レンダリング
+  // ==========================================
 
-  // データ読み込み中の表示
   if (!isConfigValid) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center text-slate-800 p-6">
         <div className="bg-white p-8 rounded-2xl shadow-lg max-w-lg w-full">
-          <div className="w-16 h-16 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-8 h-8" />
-          </div>
+          <div className="w-16 h-16 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center mx-auto mb-4"><AlertCircle className="w-8 h-8" /></div>
           <h2 className="text-xl font-bold mb-4 text-center">Firebaseの設定が完了していません</h2>
           <div className="text-slate-600 mb-6 text-sm space-y-3 leading-relaxed">
-            <p>
-              コード内の <code>firebaseConfig</code> が <code>"YOUR_API_KEY"</code> のままになっているため、データベースに接続できません。
-            </p>
-            <p className="font-medium text-slate-800">
-              【解決手順】
-            </p>
-            <ol className="list-decimal list-inside space-y-1 ml-1">
-              <li>Firebase Console でご自身のプロジェクトを開く</li>
-              <li>設定画面から <code>firebaseConfig</code> の文字列をコピー</li>
-              <li>StackBlitzの <code>App.jsx</code> の10行目付近にある該当部分を書き換えて保存</li>
-            </ol>
+            <p>コード内の <code>firebaseConfig</code> が <code>"YOUR_API_KEY"</code> のままになっています。</p>
           </div>
         </div>
       </div>
     );
   }
 
-  // ログインしていない場合の画面
   if (!user && !loading) {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center text-slate-800 p-6">
         <div className="bg-white p-10 rounded-3xl shadow-xl max-w-md w-full text-center">
-          <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-6 transform rotate-3">
-            <CheckSquare className="w-10 h-10" />
-          </div>
+          <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-6 transform rotate-3"><CheckSquare className="w-10 h-10" /></div>
           <h1 className="text-3xl font-extrabold mb-2 text-slate-800">Kanban Notes</h1>
           <p className="text-slate-500 mb-8 font-medium">どこからでも、あなたのアイデアにアクセス。</p>
-          
-          <button
-            onClick={handleGoogleLogin}
-            className="w-full flex items-center justify-center gap-3 bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-4 rounded-xl font-bold transition-all shadow-sm active:scale-[0.98]"
-          >
+          <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-4 rounded-xl font-bold transition-all shadow-sm active:scale-[0.98]">
             <svg className="w-6 h-6" viewBox="0 0 24 24">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
               <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
@@ -464,14 +456,12 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center text-slate-500">
         <Loader2 className="w-8 h-8 animate-spin text-indigo-500 mb-4" />
-        <p className="font-medium">クラウドと同期中...</p>
+        <p className="font-medium">同期中...</p>
       </div>
     );
   }
 
-  const activeNotes = notes.filter(n => 
-    n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted)
-  );
+  const activeNotes = notes.filter(n => n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted));
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
@@ -481,33 +471,21 @@ export default function App() {
         .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
       `}} />
 
-      {/* ヘッダー＆タブ */}
+      {/* ヘッダー */}
       <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
         <div className="px-6 py-4 flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight text-slate-800 flex items-center gap-2">
-            Kanban Notes <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-1 rounded-full font-bold ml-2">Cloud Synced</span>
+            Kanban Notes <span className="text-xs bg-indigo-100 text-indigo-600 px-2 py-1 rounded-full font-bold ml-2">Cloud</span>
           </h1>
           <div className="flex items-center gap-4">
             <div className="hidden sm:flex items-center gap-2 text-sm text-slate-500 font-medium">
-              {user?.photoURL ? (
-                <img src={user.photoURL} alt="User" className="w-6 h-6 rounded-full border border-slate-200" />
-              ) : null}
+              {user?.photoURL && <img src={user.photoURL} alt="User" className="w-6 h-6 rounded-full border border-slate-200" />}
               {user?.displayName || 'ユーザー'}
             </div>
-            <button
-              onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-              title="ログアウト"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
+            <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"><LogOut className="w-5 h-5" /></button>
             <div className="w-px h-6 bg-slate-200 mx-1"></div>
-            <button
-              onClick={() => openAddModal()}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              新規メモ
+            <button onClick={() => openAddModal()} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm">
+              <Plus className="w-4 h-4" /> 新規メモ
             </button>
           </div>
         </div>
@@ -517,13 +495,18 @@ export default function App() {
           {categories.map(category => (
             <div
               key={category.id}
-              className={`group flex items-center gap-2 px-4 py-3 border-b-2 transition-colors cursor-pointer whitespace-nowrap
+              onClick={() => setActiveCategoryId(category.id)}
+              onDragOver={(e) => handleCategoryDragOver(e, category.id)}
+              onDragLeave={() => setDragOverCategoryId(null)}
+              onDrop={(e) => handleCategoryDrop(e, category.id)}
+              className={`flex items-center gap-2 px-4 py-3 border-b-2 transition-all cursor-pointer whitespace-nowrap
                 ${activeCategoryId === category.id 
                   ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50' 
-                  : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                  : dragOverCategoryId === category.id
+                    ? 'border-indigo-400 text-indigo-600 bg-indigo-50 scale-105' // D&Dホバー時のスタイル
+                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
                 }
               `}
-              onClick={() => setActiveCategoryId(category.id)}
             >
               {editingCategoryId === category.id ? (
                 <input
@@ -533,60 +516,52 @@ export default function App() {
                   onBlur={() => saveCategoryName(category.id)}
                   onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)}
                   autoFocus
-                  className="border border-indigo-300 rounded px-2 py-0.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                  className="border border-indigo-300 rounded px-2 py-0.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white w-24 sm:w-32"
                 />
               ) : (
                 <>
-                  <span className="font-semibold text-sm">{category.name}</span>
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }}
-                    className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-indigo-600 transition-opacity rounded"
-                  >
-                    <Edit2 className="w-3 h-3" />
-                  </button>
-                  {categories.length > 1 && (
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleDeleteCategory(category.id); }}
-                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-500 transition-opacity rounded"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
+                  <span className="font-semibold text-sm select-none">{category.name}</span>
+                  {/* スマホ対応：アクティブなタブにだけ編集/削除ボタンを表示する */}
+                  {activeCategoryId === category.id && (
+                    <div className="flex items-center ml-1">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }}
+                        className="p-1 text-slate-400 hover:text-indigo-600 transition-colors rounded"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      {categories.length > 1 && (
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleDeleteCategory(category.id); }}
+                          className="p-1 text-slate-400 hover:text-red-500 transition-colors rounded"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </>
               )}
             </div>
           ))}
-          <button
-            onClick={handleAddCategory}
-            className="flex items-center gap-1 px-4 py-3 text-slate-500 hover:text-indigo-600 border-b-2 border-transparent transition-colors font-medium text-sm whitespace-nowrap"
-          >
-            <FolderPlus className="w-4 h-4" />
-            追加
+          <button onClick={handleAddCategory} className="flex items-center gap-1 px-4 py-3 text-slate-500 hover:text-indigo-600 border-b-2 border-transparent transition-colors font-medium text-sm whitespace-nowrap">
+            <FolderPlus className="w-4 h-4" /> 追加
           </button>
 
-          {/* 完了済み表示トグル */}
           <div className="ml-auto flex items-center mb-3 pr-2 flex-shrink-0">
             <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-500 hover:text-slate-700 transition-colors select-none">
-              <input
-                type="checkbox"
-                checked={showCompleted}
-                onChange={(e) => setShowCompleted(e.target.checked)}
-                className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
-              />
-              <span className="font-medium">完了済みを表示</span>
+              <input type="checkbox" checked={showCompleted} onChange={(e) => setShowCompleted(e.target.checked)} className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500" />
+              <span className="font-medium">完了を表示</span>
             </label>
           </div>
         </div>
       </header>
 
-      {/* メインボード（グリッド配置） */}
+      {/* メインボード */}
       <main className="flex-1 overflow-y-auto p-6">
         <div className="max-w-7xl mx-auto h-full">
           {activeNotes.length === 0 ? (
-            <div 
-              onClick={() => openAddModal()}
-              className="text-center py-16 border-2 border-dashed border-slate-300 rounded-2xl text-slate-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors cursor-pointer max-w-lg mx-auto mt-10"
-            >
+            <div onClick={() => openAddModal()} className="text-center py-16 border-2 border-dashed border-slate-300 rounded-2xl text-slate-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors cursor-pointer max-w-lg mx-auto mt-10">
               <div className="text-lg font-medium mb-2">メモがありません</div>
               <div className="text-sm">＋ ここをクリックして新しいメモを追加</div>
             </div>
@@ -594,7 +569,6 @@ export default function App() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 items-start pb-10">
               {activeNotes.map((note) => {
                 const firstImageBlock = note.blocks?.find(b => b.type === 'image');
-                
                 return (
                   <div
                     id={`note-${note.id}`}
@@ -602,9 +576,9 @@ export default function App() {
                     draggable
                     onDragStart={(e) => handleDragStart(e, note.id)}
                     onDragEnd={(e) => handleDragEnd(e, note.id)}
-                    onDragOver={(e) => handleDragOver(e, note.id)}
-                    onDragLeave={(e) => handleDragLeave(e, note.id)}
-                    onDrop={(e) => handleDrop(e, note.id)}
+                    onDragOver={(e) => handleDragOverNote(e, note.id)}
+                    onDragLeave={() => setDragOverNoteId(null)}
+                    onDrop={(e) => handleDropOnNote(e, note.id)}
                     onClick={() => openEditModal(note)}
                     className={`group rounded-xl p-4 border shadow-sm transition-all cursor-pointer relative
                       ${dragOverNoteId === note.id ? 'border-indigo-500 ring-2 ring-indigo-200 scale-[1.02] z-10' : 'hover:shadow-md hover:border-indigo-400'}
@@ -625,46 +599,37 @@ export default function App() {
                         onClick={(e) => toggleComplete(e, note.id)}
                         className={`absolute top-3 right-3 transition-colors p-1 rounded-full shadow-sm border z-10
                           ${note.isCompleted ? 'text-green-500 bg-green-50 border-green-200 hover:bg-green-100' : 'text-slate-300 bg-white border-slate-100 hover:text-green-500 hover:border-green-300'}`}
-                        title={note.isCompleted ? "未完了に戻す" : "完了にする"}
                       >
                         {note.isCompleted ? <CheckCircle2 className="w-5 h-5" /> : <Circle className="w-5 h-5" />}
                       </button>
                     </div>
 
-                    <div className="relative overflow-hidden max-h-48 rounded-b-lg">
-                      <div className="space-y-0.5 text-[15px] pb-6">
+                    {/* ③ ボードのプレビューを最大20行程度に拡大 (max-h-96 = 384px) */}
+                    <div className="relative overflow-hidden max-h-96 rounded-b-lg">
+                      <div className="space-y-0 text-[15px] pb-6">
                         {note.blocks?.map(block => (
-                          <div key={block.id}>
+                          <div key={block.id} className="py-0.5"> {/* プレビュー側の行間も統一 */}
                             {block.type === 'text' && <div className={`whitespace-pre-wrap leading-relaxed ${note.isCompleted ? 'text-slate-400' : 'text-slate-600'}`}>{block.content}</div>}
                             {block.type === 'list' && (
                               <div className={`flex items-start gap-1.5 leading-relaxed ${note.isCompleted ? 'text-slate-400' : 'text-slate-700'}`}>
-                                <span className="text-slate-400 font-bold mt-0.5">•</span>
+                                <span className="text-slate-400 font-bold mt-0.5 shrink-0">•</span>
                                 <span>{block.content}</span>
                               </div>
                             )}
                             {block.type === 'checkbox' && (
-                              <div 
-                                className="flex items-start gap-2 cursor-pointer group/check leading-relaxed" 
-                                onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}
-                              >
+                              <div className="flex items-start gap-2 cursor-pointer group/check leading-relaxed" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
                                 {block.checked 
                                   ? <CheckCircle2 className="w-4 h-4 text-indigo-500 mt-1 flex-shrink-0 group-hover/check:opacity-70" /> 
                                   : <Circle className="w-4 h-4 text-slate-400 mt-1 flex-shrink-0 group-hover/check:text-indigo-400" />
                                 }
-                                <span className={`${block.checked || note.isCompleted ? 'line-through text-slate-400' : 'text-slate-700'} leading-snug`}>
-                                  {block.content}
-                                </span>
+                                <span className={`${block.checked || note.isCompleted ? 'line-through text-slate-400' : 'text-slate-700'} leading-snug`}>{block.content}</span>
                               </div>
                             )}
-                            {block.type === 'image' && !firstImageBlock && (
-                              <div className="text-xs text-slate-400 flex items-center gap-1 my-1">
-                                <ImageIcon className="w-3 h-3"/> 画像
-                              </div>
-                            )}
+                            {block.type === 'image' && !firstImageBlock && <div className="text-xs text-slate-400 flex items-center gap-1 my-1"><ImageIcon className="w-3 h-3"/> 画像</div>}
                           </div>
                         ))}
                       </div>
-                      <div className={`absolute bottom-0 left-0 right-0 h-10 pointer-events-none ${note.isCompleted ? 'bg-gradient-to-t from-slate-50 to-transparent' : 'bg-gradient-to-t from-white to-transparent'}`}></div>
+                      <div className={`absolute bottom-0 left-0 right-0 h-12 pointer-events-none ${note.isCompleted ? 'bg-gradient-to-t from-slate-50 to-transparent' : 'bg-gradient-to-t from-white to-transparent'}`}></div>
                     </div>
                   </div>
                 );
@@ -679,43 +644,35 @@ export default function App() {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 rounded-t-2xl shrink-0">
-              <h2 className="text-lg font-bold text-slate-800">
-                {editingNote ? 'メモを編集' : '新しいメモ'}
-              </h2>
+              <h2 className="text-lg font-bold text-slate-800">{editingNote ? 'メモを編集' : '新しいメモ'}</h2>
               <div className="flex items-center gap-2">
                 {editingNote && (
-                  <button type="button" onClick={() => deleteNote(editingNote.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors" title="削除">
-                    <Trash2 className="w-5 h-5" />
-                  </button>
+                  <button type="button" onClick={() => deleteNote(editingNote.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition-colors"><Trash2 className="w-5 h-5" /></button>
                 )}
-                <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:bg-slate-200 p-2 rounded-lg transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
+                <button type="button" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:bg-slate-200 p-2 rounded-lg transition-colors"><X className="w-5 h-5" /></button>
               </div>
             </div>
 
-            <form onSubmit={saveNote} className="flex-1 overflow-hidden flex flex-col">
+            <div className="flex-1 overflow-hidden flex flex-col relative">
               <div className="flex-1 overflow-y-auto p-6 custom-scrollbar flex flex-col">
-                <div className="space-y-6 flex-1">
+                <div className="space-y-4 flex-1">
                   <div>
-                    <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full px-2 py-2 text-2xl font-bold text-slate-800 border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 outline-none transition-colors bg-transparent placeholder:text-slate-300" placeholder="タイトルを入力..." />
+                    <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="w-full px-1 py-2 text-2xl font-bold text-slate-800 border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 outline-none transition-colors bg-transparent placeholder:text-slate-300" placeholder="タイトル" />
+                  </div>
+                  <div className="max-w-xs px-1">
+                    <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-sm text-slate-600">
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
                   </div>
 
-                  <div className="flex gap-4">
-                    <div className="flex-1 max-w-xs">
-                      <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">カテゴリー</label>
-                      <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-sm">
-                        {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="pt-2 border-t border-slate-100 relative">
-                    <div className="space-y-0 pb-10">
+                  {/* ①＆② エディタ部分：シームレスなUI、余白の最適化 */}
+                  <div className="pt-4 relative min-h-[200px]">
+                    <div className="space-y-0 pb-20"> {/* pb-20で下のボタンエリアとの被りを防止 */}
                       {formData.blocks?.map((block, index) => (
-                        <div key={block.id} className="flex gap-2 items-start group">
-                          <div className="w-6 flex justify-center mt-1 flex-shrink-0">
-                            {block.type === 'list' && <div className="text-slate-400 font-bold">•</div>}
+                        <div key={block.id} className="flex items-start group relative">
+                          {/* 左側の記号（リスト・チェックボックス） */}
+                          <div className="w-7 flex justify-center shrink-0 pt-[8px]"> 
+                            {block.type === 'list' && <div className="text-slate-400 font-bold text-lg">•</div>}
                             {block.type === 'checkbox' && (
                               <div className="cursor-pointer" onClick={() => updateBlock(block.id, { checked: !block.checked })}>
                                 {block.checked ? <CheckSquare className="w-5 h-5 text-indigo-500" /> : <Square className="w-5 h-5 text-slate-300 hover:text-indigo-300" />}
@@ -723,7 +680,8 @@ export default function App() {
                             )}
                           </div>
                           
-                          <div className="flex-1">
+                          {/* 入力エリア：行間を統一し枠線を消す */}
+                          <div className="flex-1 pl-1 pr-8">
                             {block.type === 'image' ? (
                               <div className="relative inline-block my-2">
                                 <img src={block.content} alt="添付画像" className="max-w-full h-auto rounded-lg border border-slate-200" />
@@ -735,40 +693,41 @@ export default function App() {
                                 onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); }}
                                 onKeyDown={(e) => handleKeyDown(e, index, block.type)}
                                 onPaste={(e) => handlePaste(e, index)}
-                                className={`w-full bg-transparent resize-none outline-none py-1 min-h-[28px] overflow-hidden leading-relaxed
+                                className={`w-full bg-transparent resize-none outline-none py-2 m-0 leading-relaxed min-h-[36px] overflow-hidden
                                   ${block.type === 'checkbox' && block.checked ? 'text-slate-400 line-through' : 'text-slate-700'} text-[15px]`}
                                 rows={1}
-                                placeholder={block.type === 'text' ? "テキストを入力するか、画像をペースト..." : "項目を入力..."}
+                                placeholder={block.type === 'text' ? "テキストを入力..." : "項目を入力..."}
                               />
                             )}
                           </div>
 
-                          <button type="button" onClick={() => removeBlock(block.id)} className="opacity-0 group-hover:opacity-100 mt-1 p-1 text-slate-300 hover:text-red-500 rounded transition-opacity" title="このブロックを削除">
+                          {/* 削除ボタンを右端に配置 */}
+                          <button type="button" onClick={() => removeBlock(block.id)} className="absolute right-0 top-2 opacity-0 group-hover:opacity-100 p-1 text-slate-300 hover:text-red-500 rounded transition-opacity" title="この行を削除">
                             <X className="w-4 h-4" />
                           </button>
                         </div>
                       ))}
                     </div>
-
-                    <div className="sticky bottom-0 bg-white/90 backdrop-blur-sm py-3 border-t border-slate-100 flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-400 uppercase mr-2">追加</span>
-                      <button type="button" onClick={() => addBlock('text')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"><AlignLeft className="w-4 h-4" /> テキスト</button>
-                      <button type="button" onClick={() => addBlock('list')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"><List className="w-4 h-4" /> リスト</button>
-                      <button type="button" onClick={() => addBlock('checkbox')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"><CheckSquare className="w-4 h-4" /> チェック</button>
-                      <button type="button" onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"><ImageIcon className="w-4 h-4" /> 画像</button>
-                      <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
-                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 rounded-b-2xl shrink-0">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors">キャンセル</button>
-                <button type="submit" className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors shadow-sm flex items-center gap-2">
-                  <Check className="w-4 h-4" /> 保存する
-                </button>
+              {/* ① 追加ボタンエリアをすっきりアイコン化し、下部に固定 */}
+              <div className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm py-3 px-6 border-t border-slate-100 flex items-center justify-center gap-6 shadow-[0_-10px_15px_-3px_rgba(255,255,255,0.9)]">
+                <button type="button" onClick={() => addBlock('text')} title="テキストを追加" className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><AlignLeft className="w-5 h-5" /></button>
+                <button type="button" onClick={() => addBlock('list')} title="リストを追加" className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><List className="w-5 h-5" /></button>
+                <button type="button" onClick={() => addBlock('checkbox')} title="チェックボックスを追加" className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><CheckSquare className="w-5 h-5" /></button>
+                <button type="button" onClick={() => fileInputRef.current?.click()} title="画像を追加" className="p-2.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><ImageIcon className="w-5 h-5" /></button>
+                <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
               </div>
-            </form>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 rounded-b-2xl shrink-0 z-10">
+              <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors">キャンセル</button>
+              <button type="button" onClick={saveNote} className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors shadow-sm flex items-center gap-2">
+                <Check className="w-4 h-4" /> 保存する
+              </button>
+            </div>
           </div>
         </div>
       )}
