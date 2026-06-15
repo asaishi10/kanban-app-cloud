@@ -95,21 +95,25 @@ export default function App() {
   }, [isModalOpen, formData.blocks]);
 
   const handleTextareaResize = (e) => {
-    e.target.style.height = 'auto';
-    e.target.style.height = `${e.target.scrollHeight}px`;
+    const el = e.target;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
     
-    // 入力行が画面下部（保存ボタンの裏など）に隠れないよう自動スクロール
-    const container = e.target.closest('.overflow-y-auto');
-    if (container) {
-      const rect = e.target.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
-      // 下部フッターの高さ＋少し余裕を持たせたピクセル値（約120px）
-      const paddingBottom = 120; 
-      
-      if (rect.bottom > containerRect.bottom - paddingBottom) {
-        container.scrollTop += (rect.bottom - (containerRect.bottom - paddingBottom));
+    // 入力行が画面下部に隠れないよう、より正確に自動スクロール
+    requestAnimationFrame(() => {
+      const container = el.closest('.overflow-y-auto');
+      if (container) {
+        const rect = el.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const paddingBottom = 60; // 画面下部との十分な余裕
+        
+        if (rect.bottom > containerRect.bottom - paddingBottom) {
+          container.scrollTop += (rect.bottom - (containerRect.bottom - paddingBottom));
+        } else if (rect.top < containerRect.top) {
+          container.scrollTop -= (containerRect.top - rect.top + 20);
+        }
       }
-    }
+    });
   };
 
   // ==========================================
@@ -343,10 +347,19 @@ export default function App() {
 
   // --- ブロックエディタ ---
   const addBlock = (type) => {
+    const newId = generateId();
     setFormData(prev => ({
       ...prev,
-      blocks: [...prev.blocks, { id: generateId(), type, content: '', checked: false }]
+      blocks: [...prev.blocks, { id: newId, type, content: '', checked: false }]
     }));
+    // 新しく追加したブロックにフォーカス＆スクロール
+    setTimeout(() => {
+      const el = document.getElementById(`block-input-${newId}`);
+      if (el) {
+        el.focus();
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 10);
   };
 
   const updateBlock = (blockId, updates) => {
@@ -373,9 +386,11 @@ export default function App() {
             const prevInput = document.getElementById(`block-input-${formData.blocks[index - 1].id}`);
             if (prevInput) {
               prevInput.focus();
-              prevInput.setSelectionRange(prevInput.value.length, prevInput.value.length);
+              const len = prevInput.value.length;
+              prevInput.setSelectionRange(len, len);
+              prevInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
-          }, 0);
+          }, 10);
         }
       }
       return;
@@ -388,7 +403,13 @@ export default function App() {
         const newBlocks = [...formData.blocks];
         newBlocks.splice(index + 1, 0, newBlock);
         setFormData({ ...formData, blocks: newBlocks });
-        setTimeout(() => document.getElementById(`block-input-${newBlock.id}`)?.focus(), 0);
+        setTimeout(() => {
+          const el = document.getElementById(`block-input-${newBlock.id}`);
+          if (el) {
+            el.focus();
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 10);
       }
     }
   };
@@ -648,42 +669,63 @@ export default function App() {
 
       {/* ノート追加・編集モーダル */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[95vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 z-50">
+          <div className="bg-white sm:rounded-2xl shadow-2xl w-full max-w-2xl h-full sm:h-[95vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
             
-            {/* ヘッダー */}
-            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 rounded-t-2xl shrink-0 gap-2 sm:gap-4">
-              <div className="flex-1 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                <input 
-                  type="text" 
-                  required 
-                  value={formData.title} 
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })} 
-                  className="flex-1 px-1 sm:px-2 py-1 sm:py-1.5 text-lg sm:text-xl font-bold text-slate-800 bg-transparent border-b-2 border-transparent hover:border-slate-300 focus:border-indigo-500 outline-none transition-colors placeholder:text-slate-400" 
-                  placeholder="タイトル" 
-                />
-                <select 
-                  value={formData.categoryId} 
-                  onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} 
-                  className="w-32 sm:w-40 px-2 sm:px-3 py-1 sm:py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-xs sm:text-sm text-slate-600 shrink-0"
-                >
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                {editingNote && (
-                  <button type="button" onClick={() => deleteNote(editingNote.id)} className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1.5 sm:p-2 rounded-lg transition-colors" title="削除">
-                    <Trash2 className="w-5 h-5" />
+            {/* ヘッダー＆ツールバー統合（上部固定） */}
+            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-200 bg-slate-50 sm:rounded-t-2xl shrink-0 flex flex-col gap-3 shadow-sm z-10 relative">
+              
+              {/* 上段：タイトル・カテゴリー・削除/閉じる */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex-1 flex items-center gap-2">
+                  <input 
+                    type="text" 
+                    required 
+                    value={formData.title} 
+                    onChange={(e) => setFormData({ ...formData, title: e.target.value })} 
+                    className="flex-1 px-1 py-1 text-lg sm:text-xl font-bold text-slate-800 bg-transparent border-b-2 border-transparent hover:border-slate-300 focus:border-indigo-500 outline-none transition-colors placeholder:text-slate-400" 
+                    placeholder="タイトル" 
+                  />
+                  <select 
+                    value={formData.categoryId} 
+                    onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} 
+                    className="w-28 sm:w-40 px-2 sm:px-3 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-xs sm:text-sm text-slate-600 shrink-0"
+                  >
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {editingNote && (
+                    <button type="button" onClick={() => deleteNote(editingNote.id)} className="text-slate-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition-colors" title="削除">
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:bg-slate-200 p-1.5 rounded-lg transition-colors" title="閉じる">
+                    <X className="w-5 h-5" />
                   </button>
-                )}
-                <button type="button" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:bg-slate-200 p-1.5 sm:p-2 rounded-lg transition-colors" title="閉じる">
-                  <X className="w-5 h-5" />
-                </button>
+                </div>
+              </div>
+
+              {/* 下段：追加ブロックアイコン ＆ キャンセル/保存ボタン */}
+              <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center gap-1 sm:gap-2">
+                  <button type="button" onClick={() => addBlock('text')} title="テキストを追加" className="p-1.5 sm:p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-100 rounded-lg transition-all"><AlignLeft className="w-5 h-5" /></button>
+                  <button type="button" onClick={() => addBlock('list')} title="リストを追加" className="p-1.5 sm:p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-100 rounded-lg transition-all"><List className="w-5 h-5" /></button>
+                  <button type="button" onClick={() => addBlock('checkbox')} title="チェックボックスを追加" className="p-1.5 sm:p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-100 rounded-lg transition-all"><CheckSquare className="w-5 h-5" /></button>
+                  <button type="button" onClick={() => fileInputRef.current?.click()} title="画像を追加" className="p-1.5 sm:p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-100 rounded-lg transition-all"><ImageIcon className="w-5 h-5" /></button>
+                  <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
+                </div>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <button type="button" onClick={() => setIsModalOpen(false)} className="px-3 py-1.5 sm:px-4 sm:py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors text-xs sm:text-sm">キャンセル</button>
+                  <button type="button" onClick={saveNote} className="px-3 py-1.5 sm:px-5 sm:py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors shadow-sm flex items-center gap-1.5 text-xs sm:text-sm">
+                    <Check className="w-4 h-4" /> 保存
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* エディタ部分：十分な余白と自動スクロールで快適に入力可能 */}
-            <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-4 sm:pt-6 pb-[50vh] custom-scrollbar flex flex-col relative">
+            {/* エディタ部分：フッターがなくなったため、下部まで完全にフリー */}
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-4 sm:pt-6 pb-[50vh] custom-scrollbar flex flex-col relative bg-white sm:rounded-b-2xl">
               <div className="flex-1 relative">
                 <div className="space-y-0">
                   {formData.blocks?.map((block, index) => (
@@ -710,6 +752,10 @@ export default function App() {
                             onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); }}
                             onKeyDown={(e) => handleKeyDown(e, index, block.type)}
                             onPaste={(e) => handlePaste(e, index)}
+                            onFocus={(e) => {
+                              // フォーカス時にも確実に見えるようにスクロール
+                              requestAnimationFrame(() => e.target.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+                            }}
                             className={`w-full bg-transparent resize-none outline-none py-0.5 m-0 leading-relaxed overflow-hidden min-h-[28px]
                               ${block.type === 'checkbox' && block.checked ? 'text-slate-400 line-through' : 'text-slate-800'} text-sm sm:text-[15px]`}
                             rows={1}
@@ -718,30 +764,12 @@ export default function App() {
                         )}
                       </div>
                       
-                      {/* スマホ対策：常に薄く表示しておき、2回タップ問題を回避 */}
                       <button type="button" onClick={() => removeBlock(block.id)} className="absolute right-0 top-1 opacity-40 sm:opacity-0 sm:group-hover:opacity-100 p-1 text-slate-400 hover:text-red-500 rounded transition-opacity" title="この行を削除">
                         <X className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                     </div>
                   ))}
                 </div>
-              </div>
-            </div>
-
-            {/* フッター */}
-            <div className="px-4 sm:px-6 py-3 sm:py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between rounded-b-2xl shrink-0 z-10 flex-wrap gap-2 sm:gap-4 shadow-[0_-10px_15px_-3px_rgba(248,250,252,1)]">
-              <div className="flex items-center gap-1 sm:gap-2">
-                <button type="button" onClick={() => addBlock('text')} title="テキストを追加" className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><AlignLeft className="w-5 h-5" /></button>
-                <button type="button" onClick={() => addBlock('list')} title="リストを追加" className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><List className="w-5 h-5" /></button>
-                <button type="button" onClick={() => addBlock('checkbox')} title="チェックボックスを追加" className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><CheckSquare className="w-5 h-5" /></button>
-                <button type="button" onClick={() => fileInputRef.current?.click()} title="画像を追加" className="p-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><ImageIcon className="w-5 h-5" /></button>
-                <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
-              </div>
-              <div className="flex items-center gap-2 sm:gap-3 ml-auto">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-3 py-2 sm:px-5 sm:py-2.5 text-slate-600 hover:bg-slate-200 rounded-lg font-medium transition-colors text-xs sm:text-base">キャンセル</button>
-                <button type="button" onClick={saveNote} className="px-4 py-2 sm:px-6 sm:py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors shadow-sm flex items-center gap-2 text-sm sm:text-base">
-                  <Check className="w-4 h-4" /> 保存する
-                </button>
               </div>
             </div>
 
