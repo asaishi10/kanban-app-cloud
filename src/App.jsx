@@ -95,20 +95,37 @@ export default function App() {
   useEffect(() => {
     if (isModalOpen) {
       setTimeout(() => {
+        // 全体の高さを再計算する際、スクロール位置がジャンプしないように記憶する
+        const container = document.querySelector('.fixed.inset-0 .overflow-y-auto');
+        const currentScrollTop = container ? container.scrollTop : 0;
+
         const textareas = document.querySelectorAll('textarea');
         textareas.forEach(t => {
           t.style.height = 'auto';
           t.style.height = `${t.scrollHeight}px`;
         });
+
+        // スクロール位置を元に戻す
+        if (container) {
+          container.scrollTop = currentScrollTop;
+        }
       }, 10);
     }
   }, [isModalOpen, formData.blocks]);
 
   const handleTextareaResize = (e) => {
     const el = e.target;
+    // 文字入力時のスクロールジャンプを防ぐため、現在のスクロール位置を記憶
+    const container = el.closest('.overflow-y-auto');
+    const currentScrollTop = container ? container.scrollTop : 0;
+
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
-    // 無理なスクロール補正を廃止し、ブラウザの自然な追従に任せます
+
+    // 高さを変更した後、スクロール位置を元に戻す
+    if (container) {
+      container.scrollTop = currentScrollTop;
+    }
   };
 
   // ==========================================
