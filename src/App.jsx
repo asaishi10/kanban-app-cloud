@@ -163,7 +163,7 @@ export default function App() {
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [linkFormData, setLinkFormData] = useState({ id: '', word: '', url: '', groupName: '一般' });
   const [draggedLinkId, setDraggedLinkId] = useState(null);
-  const [dragOverLinkId, setDragOverLinkId] = useState(null);
+  const [linkDragOverIndicator, setLinkDragOverIndicator] = useState(null);
 
   // モーダル・エディタ系
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -175,6 +175,7 @@ export default function App() {
   const [dragOverCategoryId, setDragOverCategoryId] = useState(null);
   const [dragOverIndicator, setDragOverIndicator] = useState(null);
   const [draggedCategoryId, setDraggedCategoryId] = useState(null);
+  const [categoryDragOverIndicator, setCategoryDragOverIndicator] = useState(null);
 
   const [activeBlockId, setActiveBlockId] = useState(null);
   const activeBlockInfoRef = useRef({ id: null, cursorPosition: 0 });
@@ -426,14 +427,19 @@ export default function App() {
   const handleCategoryDragOver = (e, categoryId) => { 
     e.preventDefault(); 
     if (draggedCategoryId && draggedCategoryId !== categoryId) {
-      setDragOverCategoryId(categoryId);
-    } else if (categoryId !== activeCategoryId && categoryId !== 'deadline' && categoryId !== 'linkbook') {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const position = (e.clientY - rect.top) < rect.height / 2 ? 'top' : 'bottom';
+      setCategoryDragOverIndicator({ id: categoryId, position });
+    } else if (!draggedCategoryId && categoryId !== activeCategoryId && categoryId !== 'deadline' && categoryId !== 'linkbook') {
       setDragOverCategoryId(categoryId); 
     }
   };
   const handleCategoryDrop = async (e, targetCategoryId) => {
     e.preventDefault(); 
+    const indicator = categoryDragOverIndicator;
     setDragOverCategoryId(null);
+    setCategoryDragOverIndicator(null);
+    
     if (targetCategoryId === 'deadline' || targetCategoryId === 'linkbook') return;
 
     const sourceCategoryId = e.dataTransfer.getData('categoryId');
@@ -442,11 +448,17 @@ export default function App() {
     if (sourceCategoryId && sourceCategoryId !== targetCategoryId && user) {
       const sortedCategories = [...categories];
       const srcIdx = sortedCategories.findIndex(c => c.id === sourceCategoryId);
-      const tgtIdx = sortedCategories.findIndex(c => c.id === targetCategoryId);
-      if (srcIdx === -1 || tgtIdx === -1) return;
+      if (srcIdx === -1) return;
 
       const [removed] = sortedCategories.splice(srcIdx, 1);
-      sortedCategories.splice(tgtIdx, 0, removed);
+      const targetIdxAfterRemove = sortedCategories.findIndex(c => c.id === targetCategoryId);
+      
+      if (targetIdxAfterRemove === -1) {
+        sortedCategories.push(removed);
+      } else {
+        const insertIndex = indicator?.position === 'top' ? targetIdxAfterRemove : targetIdxAfterRemove + 1;
+        sortedCategories.splice(insertIndex, 0, removed);
+      }
       
       const updatedCategories = sortedCategories.map((c, index) => ({ ...c, order: index * 1000 }));
       setCategories(updatedCategories);
@@ -470,6 +482,7 @@ export default function App() {
   const handleCategoryDragEnd = () => {
     setDraggedCategoryId(null);
     setDragOverCategoryId(null);
+    setCategoryDragOverIndicator(null);
   };
 
   const handleFreenotePointerDown = (e, note) => {
@@ -555,10 +568,17 @@ export default function App() {
     e.dataTransfer.setData('linkId', id); setDraggedLinkId(id);
   };
   const handleLinkDragOver = (e, id) => {
-    e.preventDefault(); if (draggedLinkId !== id) setDragOverLinkId(id);
+    e.preventDefault(); 
+    if (draggedLinkId !== id) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const position = (e.clientY - rect.top) < rect.height / 2 ? 'top' : 'bottom';
+      setLinkDragOverIndicator({ id, position });
+    }
   };
   const handleLinkDrop = async (e, targetId) => {
-    e.preventDefault(); setDragOverLinkId(null);
+    e.preventDefault(); 
+    const indicator = linkDragOverIndicator;
+    setLinkDragOverIndicator(null);
     const sourceId = e.dataTransfer.getData('linkId');
     if (!sourceId || sourceId === targetId || !user) return;
 
@@ -566,12 +586,18 @@ export default function App() {
     const sortedCurrentLinks = currentLinks.sort((a,b) => a.order - b.order);
     
     const sourceIdx = sortedCurrentLinks.findIndex(l => l.id === sourceId);
-    const targetIdx = sortedCurrentLinks.findIndex(l => l.id === targetId);
-    if (sourceIdx === -1 || targetIdx === -1) return;
+    if (sourceIdx === -1) return;
 
     const newLinks = [...sortedCurrentLinks];
     const [removed] = newLinks.splice(sourceIdx, 1);
-    newLinks.splice(targetIdx, 0, removed);
+    
+    const targetIdxAfterRemove = newLinks.findIndex(l => l.id === targetId);
+    if (targetIdxAfterRemove === -1) {
+      newLinks.push(removed);
+    } else {
+      const insertIndex = indicator?.position === 'top' ? targetIdxAfterRemove : targetIdxAfterRemove + 1;
+      newLinks.splice(insertIndex, 0, removed);
+    }
 
     const updatedLinks = newLinks.map((l, i) => ({ ...l, order: i * 1000 }));
     
@@ -580,6 +606,10 @@ export default function App() {
     for (const l of updatedLinks) {
       await setDoc(getLinkDoc(l.id), { order: l.order }, { merge: true });
     }
+  };
+  const handleLinkDragEnd = () => {
+    setDraggedLinkId(null);
+    setLinkDragOverIndicator(null);
   };
 
   const insertContentIntoText = (contentData, type) => {
@@ -835,12 +865,18 @@ export default function App() {
               onDragEnd={handleCategoryDragEnd}
               onClick={() => handleTabClick(category.id)}
               onDragOver={(e) => handleCategoryDragOver(e, category.id)}
-              onDragLeave={() => setDragOverCategoryId(null)}
+              onDragLeave={() => { setDragOverCategoryId(null); setCategoryDragOverIndicator(null); }}
               onDrop={(e) => handleCategoryDrop(e, category.id)}
-              className={`flex items-center gap-[8px] px-3 py-2 rounded-xl transition-colors cursor-pointer group
+              className={`flex items-center gap-[8px] px-3 py-2 rounded-xl transition-colors cursor-pointer group relative
                 ${activeCategoryId === category.id ? 'bg-[#E0FFEE] text-[#00CC5B]' : dragOverCategoryId === category.id ? 'bg-[#E0FFEE] text-[#00AC4C] border border-[#00CC5B] scale-105' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}
               `}
             >
+              {categoryDragOverIndicator?.id === category.id && categoryDragOverIndicator?.position === 'top' && (
+                <div className="absolute top-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mt-[2px]"></div>
+              )}
+              {categoryDragOverIndicator?.id === category.id && categoryDragOverIndicator?.position === 'bottom' && (
+                <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mb-[2px]"></div>
+              )}
               {editingCategoryId === category.id ? (
                 <input type="text" value={editingCategoryName} onChange={(e) => setEditingCategoryName(e.target.value)} onBlur={() => saveCategoryName(category.id)} onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)} autoFocus className="border border-[#00CC5B] rounded px-2 py-0.5 text-[14px] outline-none bg-[#FFFFFF] w-full" />
               ) : (
@@ -974,10 +1010,18 @@ export default function App() {
                       key={link.id} 
                       draggable 
                       onDragStart={(e) => handleLinkDragStart(e, link.id)}
+                      onDragEnd={handleLinkDragEnd}
                       onDragOver={(e) => handleLinkDragOver(e, link.id)}
+                      onDragLeave={() => setLinkDragOverIndicator(null)}
                       onDrop={(e) => handleLinkDrop(e, link.id)}
-                      className={`px-3 py-2 flex items-center justify-between gap-4 transition-colors cursor-grab active:cursor-grabbing rounded-lg ${dragOverLinkId === link.id ? 'bg-[#E0FFEE] border border-[#00CC5B]' : 'hover:bg-[#F7F9F8]'}`}
+                      className={`px-3 py-2 flex items-center justify-between gap-4 transition-colors cursor-grab active:cursor-grabbing rounded-lg relative hover:bg-[#F7F9F8]`}
                     >
+                      {linkDragOverIndicator?.id === link.id && linkDragOverIndicator?.position === 'top' && (
+                        <div className="absolute top-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mt-[2px]"></div>
+                      )}
+                      {linkDragOverIndicator?.id === link.id && linkDragOverIndicator?.position === 'bottom' && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mb-[2px]"></div>
+                      )}
                       <div className="flex items-center gap-3 flex-1 overflow-hidden">
                         <GripVertical className="w-4 h-4 text-[#C4C4C4] shrink-0" />
                         <div className="flex items-center gap-2 flex-1 overflow-hidden">
