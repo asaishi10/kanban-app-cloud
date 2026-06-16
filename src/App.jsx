@@ -269,10 +269,16 @@ export default function App() {
     let isInitialCategoryLoad = true;
 
     const unsubCategories = onSnapshot(categoriesRef, (snapshot) => {
-      const loadedCategories = snapshot.docs.map(d => d.data()).sort((a, b) => (a.order || a.createdAt) - (b.order || b.createdAt));
+      const loadedCategories = snapshot.docs.map(d => d.data()).sort((a, b) => {
+        // orderが0の場合も正しく評価できるように修正
+        const orderA = a.order !== undefined ? a.order : a.createdAt;
+        const orderB = b.order !== undefined ? b.order : b.createdAt;
+        return orderA - orderB;
+      });
       if (loadedCategories.length === 0 && isInitialCategoryLoad) {
         const defaultId = generateId();
-        setDoc(doc(categoriesRef, defaultId), { id: defaultId, name: 'メインボード', createdAt: Date.now() });
+        const now = Date.now();
+        setDoc(doc(categoriesRef, defaultId), { id: defaultId, name: 'メインボード', createdAt: now, order: now });
       } else {
         setCategories(loadedCategories);
         if (!activeCategoryId && isInitialCategoryLoad) setActiveCategoryId(loadedCategories[0]?.id || 'freenote');
@@ -307,7 +313,8 @@ export default function App() {
   const handleAddCategory = async () => {
     if (!user) return;
     const newId = generateId();
-    const newCategory = { id: newId, name: '新しいボード', createdAt: Date.now() };
+    const now = Date.now();
+    const newCategory = { id: newId, name: '新しいボード', createdAt: now, order: now };
     await setDoc(getCategoryDoc(newId), newCategory);
     handleTabClick(newId);
     setEditingCategoryId(newId);
@@ -460,7 +467,8 @@ export default function App() {
         sortedCategories.splice(insertIndex, 0, removed);
       }
       
-      const updatedCategories = sortedCategories.map((c, index) => ({ ...c, order: index * 1000 }));
+      // 0を避けるために1から計算を開始
+      const updatedCategories = sortedCategories.map((c, index) => ({ ...c, order: (index + 1) * 1000 }));
       setCategories(updatedCategories);
       for (const c of updatedCategories) {
         await setDoc(getCategoryDoc(c.id), { order: c.order }, { merge: true });
