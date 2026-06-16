@@ -299,7 +299,6 @@ export default function App() {
 
   const handleTabClick = (categoryId) => {
     setActiveCategoryId(categoryId);
-    setIsSidebarOpen(false); // スマホ用：タブクリックでサイドバーを閉じる
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
   };
@@ -806,7 +805,10 @@ export default function App() {
           </div>
           
           <div className="flex-1 overflow-y-auto custom-scrollbar py-4 px-3 flex flex-col gap-1">
-            <span className="font-bold text-[14px]">フリーノート</span>
+            <div onClick={() => handleTabClick('freenote')} className={`flex items-center gap-[12px] px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${activeCategoryId === 'freenote' ? 'bg-[#E0FFEE] text-[#00CC5B]' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}`}>
+              <PenTool className="w-5 h-5" />
+              <span className="font-bold text-[14px]">フリーノート</span>
+            </div>
           
           <div onClick={() => handleTabClick('deadline')} className={`flex items-center gap-[12px] px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${activeCategoryId === 'deadline' ? 'bg-[#E0FFEE] text-[#00CC5B]' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}`}>
             <Calendar className="w-5 h-5" />
