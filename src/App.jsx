@@ -3,7 +3,7 @@ import {
   Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, 
   CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, 
   AlertCircle, LogOut, Calendar, Clock, PenTool, Link2, Menu, 
-  GripVertical, ZoomIn, ZoomOut, ChevronRight
+  GripVertical, ZoomIn, ZoomOut, ChevronRight, ExternalLink
 } from 'lucide-react';
 
 // --- Firebase のインポート ---
@@ -147,7 +147,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   // レイアウト系
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // カテゴリー・メモ系
   const [categories, setCategories] = useState([]);
@@ -174,6 +174,7 @@ export default function App() {
   const [draggedNoteId, setDraggedNoteId] = useState(null);
   const [dragOverCategoryId, setDragOverCategoryId] = useState(null);
   const [dragOverIndicator, setDragOverIndicator] = useState(null);
+  const [draggedCategoryId, setDraggedCategoryId] = useState(null);
 
   const [activeBlockId, setActiveBlockId] = useState(null);
   const activeBlockInfoRef = useRef({ id: null, cursorPosition: 0 });
@@ -267,7 +268,7 @@ export default function App() {
     let isInitialCategoryLoad = true;
 
     const unsubCategories = onSnapshot(categoriesRef, (snapshot) => {
-      const loadedCategories = snapshot.docs.map(d => d.data()).sort((a, b) => a.createdAt - b.createdAt);
+      const loadedCategories = snapshot.docs.map(d => d.data()).sort((a, b) => (a.order || a.createdAt) - (b.order || b.createdAt));
       if (loadedCategories.length === 0 && isInitialCategoryLoad) {
         const defaultId = generateId();
         setDoc(doc(categoriesRef, defaultId), { id: defaultId, name: 'メインボード', createdAt: Date.now() });
@@ -423,14 +424,53 @@ export default function App() {
     setNotes(prev => [...prev.filter(n => n.categoryId !== activeCategoryId), ...updatedNotes]);
     for (const note of updatedNotes) await setDoc(getNoteDoc(note.id), { order: note.order }, { merge: true });
   };
-  const handleCategoryDragOver = (e, categoryId) => { e.preventDefault(); if (categoryId !== activeCategoryId && categoryId !== 'deadline' && categoryId !== 'linkbook') setDragOverCategoryId(categoryId); };
+  const handleCategoryDragOver = (e, categoryId) => { 
+    e.preventDefault(); 
+    if (draggedCategoryId && draggedCategoryId !== categoryId) {
+      setDragOverCategoryId(categoryId);
+    } else if (categoryId !== activeCategoryId && categoryId !== 'deadline' && categoryId !== 'linkbook') {
+      setDragOverCategoryId(categoryId); 
+    }
+  };
   const handleCategoryDrop = async (e, targetCategoryId) => {
-    e.preventDefault(); setDragOverCategoryId(null);
+    e.preventDefault(); 
+    setDragOverCategoryId(null);
     if (targetCategoryId === 'deadline' || targetCategoryId === 'linkbook') return;
-    const sourceId = e.dataTransfer.getData('noteId');
-    if (!sourceId || targetCategoryId === activeCategoryId || !user) return;
-    setNotes(notes.map(n => n.id === sourceId ? { ...n, categoryId: targetCategoryId, order: Date.now() } : n));
-    await setDoc(getNoteDoc(sourceId), { categoryId: targetCategoryId, order: Date.now() }, { merge: true });
+
+    const sourceCategoryId = e.dataTransfer.getData('categoryId');
+    const sourceNoteId = e.dataTransfer.getData('noteId');
+
+    if (sourceCategoryId && sourceCategoryId !== targetCategoryId && user) {
+      const sortedCategories = [...categories];
+      const srcIdx = sortedCategories.findIndex(c => c.id === sourceCategoryId);
+      const tgtIdx = sortedCategories.findIndex(c => c.id === targetCategoryId);
+      if (srcIdx === -1 || tgtIdx === -1) return;
+
+      const [removed] = sortedCategories.splice(srcIdx, 1);
+      sortedCategories.splice(tgtIdx, 0, removed);
+      
+      const updatedCategories = sortedCategories.map((c, index) => ({ ...c, order: index * 1000 }));
+      setCategories(updatedCategories);
+      for (const c of updatedCategories) {
+        await setDoc(getCategoryDoc(c.id), { order: c.order }, { merge: true });
+      }
+      return;
+    }
+
+    if (!sourceNoteId || targetCategoryId === activeCategoryId || !user) return;
+    setNotes(notes.map(n => n.id === sourceNoteId ? { ...n, categoryId: targetCategoryId, order: Date.now() } : n));
+    await setDoc(getNoteDoc(sourceNoteId), { categoryId: targetCategoryId, order: Date.now() }, { merge: true });
+  };
+
+  const handleCategoryDragStart = (e, id) => {
+    e.stopPropagation();
+    e.dataTransfer.setData('categoryId', id);
+    setDraggedCategoryId(id);
+  };
+
+  const handleCategoryDragEnd = () => {
+    setDraggedCategoryId(null);
+    setDragOverCategoryId(null);
   };
 
   const handleFreenotePointerDown = (e, note) => {
@@ -756,18 +796,17 @@ export default function App() {
       )}
 
       {/* ★ 1. サイドバー */}
-      <aside className={`fixed sm:static inset-y-0 left-0 w-64 bg-[#FFFFFF] border-r border-[#D7DCD9] flex flex-col z-50 transform transition-transform duration-200 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full sm:translate-x-0'}`}>
-        <div className="h-16 flex items-center px-6 border-b border-[#D7DCD9] shrink-0">
-          <h1 className="text-[20px] font-bold text-[#333333] flex items-center gap-[8px]">
-            Kanban Notes
-          </h1>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto custom-scrollbar py-4 px-3 flex flex-col gap-1">
-          <div onClick={() => handleTabClick('freenote')} className={`flex items-center gap-[12px] px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${activeCategoryId === 'freenote' ? 'bg-[#E0FFEE] text-[#00CC5B]' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}`}>
-            <PenTool className="w-5 h-5" />
-            <span className="font-bold text-[14px]">フリーノート</span>
+      <div className={`transition-all duration-300 ease-in-out shrink-0 z-50 ${isSidebarOpen ? 'w-64' : 'w-0'}`}>
+        <aside className={`fixed inset-y-0 left-0 w-64 bg-[#FFFFFF] border-r border-[#D7DCD9] flex flex-col transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          <div className="h-16 flex items-center justify-between px-6 border-b border-[#D7DCD9] shrink-0">
+            <h1 className="text-[20px] font-bold text-[#333333] flex items-center gap-[8px]">
+              Kanban Notes
+            </h1>
+            <button className="sm:hidden p-1 text-[#666666]" onClick={() => setIsSidebarOpen(false)}><X className="w-5 h-5"/></button>
           </div>
+          
+          <div className="flex-1 overflow-y-auto custom-scrollbar py-4 px-3 flex flex-col gap-1">
+            <span className="font-bold text-[14px]">フリーノート</span>
           
           <div onClick={() => handleTabClick('deadline')} className={`flex items-center gap-[12px] px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${activeCategoryId === 'deadline' ? 'bg-[#E0FFEE] text-[#00CC5B]' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}`}>
             <Calendar className="w-5 h-5" />
@@ -789,12 +828,15 @@ export default function App() {
           {categories.map(category => (
             <div
               key={category.id}
+              draggable
+              onDragStart={(e) => handleCategoryDragStart(e, category.id)}
+              onDragEnd={handleCategoryDragEnd}
               onClick={() => handleTabClick(category.id)}
               onDragOver={(e) => handleCategoryDragOver(e, category.id)}
               onDragLeave={() => setDragOverCategoryId(null)}
               onDrop={(e) => handleCategoryDrop(e, category.id)}
               className={`flex items-center gap-[8px] px-3 py-2 rounded-xl transition-colors cursor-pointer group
-                ${activeCategoryId === category.id ? 'bg-[#E0FFEE] text-[#00CC5B]' : dragOverCategoryId === category.id ? 'bg-[#E0FFEE] text-[#00AC4C] border border-[#00CC5B]' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}
+                ${activeCategoryId === category.id ? 'bg-[#E0FFEE] text-[#00CC5B]' : dragOverCategoryId === category.id ? 'bg-[#E0FFEE] text-[#00AC4C] border border-[#00CC5B] scale-105' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}
               `}
             >
               {editingCategoryId === category.id ? (
@@ -822,17 +864,18 @@ export default function App() {
           </div>
           <button onClick={handleLogout} className="p-1.5 text-[#666666] hover:text-[#ED1C24] hover:bg-[#F7F9F8] rounded-lg transition-colors"><LogOut className="w-4 h-4" /></button>
         </div>
-      </aside>
+        </aside>
+      </div>
 
       {/* ★ 右側メインコンテンツ */}
       <div className="flex-1 flex flex-col min-w-0">
         
         <header className="h-16 bg-[#FFFFFF] border-b border-[#D7DCD9] flex items-center justify-between px-4 sm:px-6 shrink-0 shadow-sm z-10">
           <div className="flex items-center gap-3">
-            <button className="sm:hidden p-2 -ml-2 text-[#666666]" onClick={() => setIsSidebarOpen(true)}>
+            <button className="p-2 -ml-2 text-[#666666] hover:bg-[#F7F9F8] rounded-lg transition-colors" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
               <Menu className="w-6 h-6" />
             </button>
-            <h2 className="text-[18px] sm:text-[20px] font-bold text-[#333333]">
+            <h2 className="text-[18px] sm:text-[20px] font-bold text-[#333333] truncate">
               {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : categories.find(c => c.id === activeCategoryId)?.name}
             </h2>
           </div>
@@ -895,11 +938,19 @@ export default function App() {
 
               {/* ズームコントローラー */}
               <div className="fixed bottom-6 right-6 flex items-center bg-[#FFFFFF] shadow-lg rounded-xl border border-[#D7DCD9] overflow-hidden z-20">
-                <button onClick={() => setFreenoteZoom(z => Math.max(0.3, z - 0.1))} className="p-3 text-[#666666] hover:bg-[#F7F9F8] transition-colors"><ZoomOut className="w-5 h-5"/></button>
-                <span className="px-2 text-[14px] font-bold text-[#333333] w-14 text-center">{Math.round(freenoteZoom * 100)}%</span>
+                <button onClick={() => setFreenoteZoom(z => Math.max(0.1, z - 0.1))} className="p-3 text-[#666666] hover:bg-[#F7F9F8] transition-colors"><ZoomOut className="w-5 h-5"/></button>
+                <div className="relative flex items-center px-1">
+                  <select 
+                    value={Math.round(freenoteZoom * 10)} 
+                    onChange={(e) => setFreenoteZoom(Number(e.target.value) / 10)}
+                    className="appearance-none outline-none bg-transparent font-bold text-[#333333] text-[14px] text-center w-12 cursor-pointer hover:bg-[#F7F9F8] py-1 rounded"
+                  >
+                    {Array.from({length: 20}, (_, i) => i + 1).map(v => (
+                      <option key={v} value={v}>{v * 10}%</option>
+                    ))}
+                  </select>
+                </div>
                 <button onClick={() => setFreenoteZoom(z => Math.min(2, z + 0.1))} className="p-3 text-[#666666] hover:bg-[#F7F9F8] transition-colors"><ZoomIn className="w-5 h-5"/></button>
-                <div className="w-px h-6 bg-[#D7DCD9]"></div>
-                <button onClick={centerFreenote} className="p-3 text-[#00CC5B] hover:bg-[#E0FFEE] font-bold text-[14px] transition-colors">中央へ</button>
               </div>
             </div>
 
@@ -913,8 +964,8 @@ export default function App() {
                 ))}
               </div>
 
-              <div className="bg-[#FFFFFF] rounded-2xl shadow-sm border border-[#D7DCD9] overflow-hidden">
-                <div className="divide-y divide-[#D7DCD9]">
+              <div className="bg-[#FFFFFF] rounded-2xl shadow-sm border border-[#D7DCD9] overflow-hidden p-2">
+                <div className="flex flex-col gap-1">
                   {filteredLinks.length === 0 && <div className="p-8 text-center text-[#666666] font-medium">表示するリンクがありません。</div>}
                   {filteredLinks.map(link => (
                     <div 
@@ -923,21 +974,20 @@ export default function App() {
                       onDragStart={(e) => handleLinkDragStart(e, link.id)}
                       onDragOver={(e) => handleLinkDragOver(e, link.id)}
                       onDrop={(e) => handleLinkDrop(e, link.id)}
-                      className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors cursor-grab active:cursor-grabbing bg-[#FFFFFF] ${dragOverLinkId === link.id ? 'border-t-4 border-[#00CC5B]' : 'hover:bg-[#F7F9F8]'}`}
+                      className={`px-3 py-2 flex items-center justify-between gap-4 transition-colors cursor-grab active:cursor-grabbing rounded-lg ${dragOverLinkId === link.id ? 'bg-[#E0FFEE] border border-[#00CC5B]' : 'hover:bg-[#F7F9F8]'}`}
                     >
                       <div className="flex items-center gap-3 flex-1 overflow-hidden">
-                        <GripVertical className="w-5 h-5 text-[#C4C4C4] shrink-0 hidden sm:block" />
-                        <div className="flex-1 overflow-hidden">
-                          <div className="flex items-center gap-2 mb-1">
-                            <div className="font-bold text-[#333333] text-[16px]">{link.word}</div>
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#F7F9F8] text-[#666666] font-bold border border-[#D7DCD9]">{link.groupName || '一般'}</span>
-                          </div>
-                          <a href={link.url} target="_blank" rel="noopener noreferrer" className="text-[#5C80FF] hover:underline truncate block text-[14px] font-medium">{link.url}</a>
+                        <GripVertical className="w-4 h-4 text-[#C4C4C4] shrink-0" />
+                        <div className="flex items-center gap-2 flex-1 overflow-hidden">
+                          <div className="font-bold text-[#333333] text-[14px] truncate">{link.word}</div>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#FFFFFF] text-[#666666] font-bold border border-[#D7DCD9] shrink-0">{link.groupName || '一般'}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                        <button onClick={() => openLinkModal(link)} className="p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><Edit2 className="w-4 h-4"/></button>
-                        <button onClick={() => handleDeleteLink(link.id)} className="p-2 text-[#C4C4C4] hover:text-[#ED1C24] hover:bg-[#FFFFFF] rounded-lg transition-colors"><Trash2 className="w-4 h-4"/></button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <a href={link.url} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 text-[#5C80FF] hover:bg-[#E0FFEE] rounded-lg transition-colors flex items-center gap-1.5 text-[12px] font-bold"><ExternalLink className="w-4 h-4"/> 開く</a>
+                        <div className="w-px h-4 bg-[#D7DCD9] mx-1"></div>
+                        <button onClick={() => openLinkModal(link)} className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><Edit2 className="w-4 h-4"/></button>
+                        <button onClick={() => handleDeleteLink(link.id)} className="p-1.5 text-[#C4C4C4] hover:text-[#ED1C24] hover:bg-[#FFE0E0] rounded-lg transition-colors"><Trash2 className="w-4 h-4"/></button>
                       </div>
                     </div>
                   ))}
