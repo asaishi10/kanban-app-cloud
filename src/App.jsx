@@ -170,20 +170,19 @@ export default function App() {
     setActiveBlockId(blockId);
   };
 
+  // ★ 修正1: 毎回の入力で全テキストエリアの高さが再計算されてスクロールが飛ぶ問題を修正
+  // [isModalOpen, formData.blocks] から formData.blocks を削除し、モーダルを開いた時だけ実行するようにします
   useEffect(() => {
     if (isModalOpen) {
       setTimeout(() => {
-        const container = document.querySelector('.overflow-y-auto');
-        const currentScrollTop = container ? container.scrollTop : 0;
         const textareas = document.querySelectorAll('textarea');
         textareas.forEach(t => {
           t.style.height = 'auto';
           t.style.height = `${t.scrollHeight}px`;
         });
-        if (container) container.scrollTop = currentScrollTop;
       }, 10);
     }
-  }, [isModalOpen, formData.blocks]);
+  }, [isModalOpen]);
 
   const handleTextareaResize = (e) => {
     const el = e.target;
@@ -600,113 +599,74 @@ export default function App() {
     e.target.value = null;
   };
 
+  // ★ 修正2: Excel等からの複雑な画像ペーストに対応
   const handlePaste = async (e) => {
-    const items = e.clipboardData?.items;
-    let hasImage = false;
-    if (items) {
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          e.preventDefault(); hasImage = true;
-          const file = items[i].getAsFile();
-          const reader = new FileReader();
-          reader.onloadend = async () => {
-            const compressedUrl = await compressImage(reader.result);
-            insertContentIntoText(compressedUrl, 'image');
-          };
-          reader.readAsDataURL(file);
-          break;
-        }
-      }
-    }
-    if (hasImage) return;
+    const clipboardData = e.clipboardData;
+    if (!clipboardData) return;
 
-    const html = e.clipboardData?.getData('text/html');
-    if (html && html.includes('<a ')) {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-      const docLinks = doc.querySelectorAll('a');
-      if (docLinks.length > 0) {
-        e.preventDefault();
-        docLinks.forEach(a => {
-            const md = `[${a.textContent}](${a.href})`;
-            a.replaceWith(document.createTextNode(md));
-        });
-        const plainText = doc.body.textContent || "";
-        insertContentIntoText(plainText, 'text');
-      }
-    }
-  };
-
-  const addBlock = (type) => {
-    setFormData(prev => {
-      const { id: targetId, cursorPosition } = activeBlockInfoRef.current;
-      const activeIdx = prev.blocks.findIndex(b => b.id === targetId);
-
-      if (activeIdx !== -1 && prev.blocks[activeIdx].type === 'text') {
-        const targetBlock = prev.blocks[activeIdx];
-        const textBefore = targetBlock.content.substring(0, cursorPosition);
-        const textAfter = targetBlock.content.substring(cursorPosition);
-        const newBlockId = generateId();
-        const newTextId = generateId();
-        const newBlocks = [...prev.blocks];
-
-        newBlocks[activeIdx] = { ...targetBlock, content: textBefore };
-        newBlocks.splice(activeIdx + 1, 0, { id: newBlockId, type, content: '', checked: false }, { id: newTextId, type: 'text', content: textAfter, checked: false });
-
-        setTimeout(() => { const el = document.getElementById(`block-input-${newBlockId}`); if(el) el.focus(); }, 50);
-        activeBlockInfoRef.current = { id: newBlockId, cursorPosition: 0 };
-        setActiveBlockId(newBlockId);
-        return { ...prev, blocks: newBlocks };
-      } else {
-        const newId = generateId();
-        const insertIdx = activeIdx !== -1 ? activeIdx + 1 : prev.blocks.length;
-        const newBlocks = [...prev.blocks];
-        newBlocks.splice(insertIdx, 0, { id: newId, type, content: '', checked: false });
-        
-        setTimeout(() => { const el = document.getElementById(`block-input-${newId}`); if(el) el.focus(); }, 50);
-        activeBlockInfoRef.current = { id: newId, cursorPosition: 0 };
-        setActiveBlockId(newId);
-        return { ...prev, blocks: newBlocks };
-      }
-    });
-  };
-
-  const updateBlock = (blockId, updates) => setFormData(prev => ({ ...prev, blocks: prev.blocks.map(b => b.id === blockId ? { ...b, ...updates } : b) }));
-  const removeBlock = (blockId) => setFormData(prev => ({ ...prev, blocks: prev.blocks.filter(b => b.id !== blockId) }));
-
-  const handleKeyDown = (e, index, blockType) => {
-    if (e.nativeEvent.isComposing) return;
-    if (e.key === 'Backspace' && formData.blocks[index].content === '') {
+    // パターンA: ファイルとして画像がクリップボードにある場合 (標準のスクショ等)
+    const files = Array.from(clipboardData.files || []);
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    
+    if (imageFiles.length > 0) {
       e.preventDefault();
-      if (formData.blocks.length > 1) {
-        removeBlock(formData.blocks[index].id);
-        if (index > 0) {
-          const prevBlock = formData.blocks[index - 1];
-          setTimeout(() => {
-            const prevInput = document.getElementById(`block-input-${prevBlock.id}`);
-            if (prevInput) {
-              prevInput.focus();
-              prevInput.setSelectionRange(prevInput.value.length, prevInput.value.length);
-            }
-          }, 10);
-          activeBlockInfoRef.current = { id: prevBlock.id, cursorPosition: prevBlock.content.length };
-          setActiveBlockId(prevBlock.id);
-        }
-      }
+      const file = imageFiles[0];
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const compressedUrl = await compressImage(reader.result);
+        insertContentIntoText(compressedUrl, 'image');
+      };
+      reader.readAsDataURL(file);
       return;
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (blockType === 'list' || blockType === 'checkbox') {
+
+    // パターンB: アイテムとして画像がある場合
+    const items = Array.from(clipboardData.items || []);
+    const imageItems = items.filter(i => i.type.startsWith('image/'));
+    if (imageItems.length > 0) {
+      const file = imageItems[0].getAsFile();
+      if (file) {
         e.preventDefault();
-        const newId = generateId();
-        const newBlock = { id: newId, type: blockType, content: '', checked: false };
-        const newBlocks = [...formData.blocks];
-        newBlocks.splice(index + 1, 0, newBlock);
-        setFormData({ ...formData, blocks: newBlocks });
-        
-        setTimeout(() => { const el = document.getElementById(`block-input-${newId}`); if (el) el.focus(); }, 10);
-        activeBlockInfoRef.current = { id: newId, cursorPosition: 0 };
-        setActiveBlockId(newId);
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const compressedUrl = await compressImage(reader.result);
+          insertContentIntoText(compressedUrl, 'image');
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+    }
+
+    // パターンC: HTMLとしてペーストされた場合 (Excelからのコピー等)
+    const html = clipboardData.getData('text/html');
+    if (html) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+
+      // Excelが画像をBase64形式でHTML内に埋め込んで送ってきた場合を検知
+      const imgs = doc.querySelectorAll('img');
+      if (imgs.length > 0) {
+        const src = imgs[0].src;
+        // Base64形式の画像データであれば抽出して挿入
+        if (src.startsWith('data:image/')) {
+          e.preventDefault();
+          insertContentIntoText(src, 'image');
+          return;
+        }
+      }
+
+      // 既存の機能: HTML内のリンク(aタグ)をMarkdownに変換する処理
+      if (html.includes('<a ')) {
+        const links = doc.querySelectorAll('a');
+        if (links.length > 0) {
+          e.preventDefault();
+          links.forEach(a => {
+              const md = `[${a.textContent}](${a.href})`;
+              a.replaceWith(document.createTextNode(md));
+          });
+          const plainText = doc.body.textContent || "";
+          insertContentIntoText(plainText, 'text');
+        }
       }
     }
   };
