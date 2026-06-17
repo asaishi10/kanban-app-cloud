@@ -159,6 +159,8 @@ export default function App() {
   const [editingCategoryId, setEditingCategoryId] = useState(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
 
+  const [allListSortConfig, setAllListSortConfig] = useState({ key: 'dueDate', direction: 'asc' });
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingNote, setEditingNote] = useState(null);
   const [formData, setFormData] = useState({ title: '', categoryId: '', blocks: [], dueDate: '', x: 0, y: 0 });
