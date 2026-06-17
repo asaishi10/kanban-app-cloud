@@ -1026,9 +1026,21 @@ export default function App() {
                             {/* 最大20行に変更 */}
                             {note.blocks?.slice(0, 20).map(block => (
                               <div key={block.id} className="py-0.5">
-                                {block.type === 'text' && <div className="text-[#666666] leading-[1.6]"><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></div>}
-                                {block.type === 'list' && <div className="text-[#666666] flex gap-1 leading-[1.6]"><span className="text-[#666666] font-bold">•</span><span><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span></div>}
-                                {block.type === 'image' && <div className="text-[#666666] flex items-center gap-1 leading-[1.6]"><ImageIcon className="w-3 h-3"/>画像</div>}
+                                {block.type === 'text' && <div className="text-[#666666] leading-[1.6] whitespace-pre-wrap"><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></div>}
+                                {block.type === 'list' && <div className="text-[#666666] flex items-start gap-1 leading-[1.6]"><span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span className="whitespace-pre-wrap"><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span></div>}
+                                {block.type === 'checkbox' && (
+                                  <div className="flex items-start gap-[4px] leading-[1.6]">
+                                    {block.checked ? <CheckCircle2 className="w-3.5 h-3.5 text-[#00CC5B] mt-[2px] flex-shrink-0" /> : <Circle className="w-3.5 h-3.5 text-[#C4C4C4] mt-[2px] flex-shrink-0" />}
+                                    <span className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} whitespace-pre-wrap`}>
+                                      <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} />
+                                    </span>
+                                  </div>
+                                )}
+                                {block.type === 'image' && (
+                                  <div className="my-1.5 rounded-lg overflow-hidden border border-[#D7DCD9] bg-[#F7F9F8] flex items-center justify-center opacity-90 max-h-32">
+                                    <img src={block.content} alt="サムネイル" className="max-w-full max-h-32 object-contain" />
+                                  </div>
+                                )}
                               </div>
                             ))}
                             <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#FFFFFF] to-transparent pointer-events-none"></div>
