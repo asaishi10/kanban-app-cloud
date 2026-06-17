@@ -1030,7 +1030,7 @@ export default function App() {
           
           {/* リスト表示（すべてのメモ） */}
           {activeCategoryId === 'all_list' && (
-            <div className="max-w-7xl mx-auto h-full p-4 sm:p-6 flex flex-col">
+            <div className="max-w-5xl mx-auto h-full p-4 sm:p-6 flex flex-col">
               <div className="bg-[#FFFFFF] rounded-xl shadow-sm border border-[#D7DCD9] overflow-hidden flex flex-col flex-1">
                 <div className="overflow-y-auto custom-scrollbar flex-1">
                   <table className="w-full text-left text-[#333333] text-[13px]">
@@ -1038,10 +1038,10 @@ export default function App() {
                       <tr>
                         <th className="px-2 py-1.5 font-bold w-12 text-center text-[#666666]">完了</th>
                         <th className="px-2 py-1.5 font-bold text-[#666666]">タイトル</th>
-                        <th className="px-2 py-1.5 font-bold text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('dueDate')}>
+                        <th className="px-2 py-1.5 font-bold w-24 sm:w-32 text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('dueDate')}>
                           期限 {allListSortConfig.key === 'dueDate' ? (allListSortConfig.direction === 'asc' ? '▲' : '▼') : ''}
                         </th>
-                        <th className="px-2 py-1.5 font-bold text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('category')}>
+                        <th className="px-2 py-1.5 font-bold w-28 sm:w-40 text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('category')}>
                           ボード名 {allListSortConfig.key === 'category' ? (allListSortConfig.direction === 'asc' ? '▲' : '▼') : ''}
                         </th>
                       </tr>
@@ -1299,34 +1299,34 @@ export default function App() {
         <div className="fixed inset-0 bg-[#333333]/60 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 z-50">
           <div className="bg-[#FFFFFF] sm:rounded-2xl shadow-2xl w-full max-w-2xl h-full sm:h-[95vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
             
-            <div className="px-3 sm:px-4 py-2 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex items-center justify-between gap-2 z-20 relative">
-              {/* スクロール可能な左・中央エリア */}
-              <div className="flex-1 flex items-center gap-2 overflow-x-auto custom-scrollbar pb-1 -mb-1">
-                <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-shrink-0 min-w-[100px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
+            <div className="px-3 sm:px-4 py-2 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex items-center justify-between gap-1 sm:gap-2 z-20 relative">
+              {/* スクロール可能な左・中央エリア（できるだけスクロールさせない） */}
+              <div className="flex-1 flex items-center gap-1 sm:gap-2 overflow-x-auto custom-scrollbar pb-1 -mb-1">
+                <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
                 
-                <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0 hover:border-[#C4C4C4] h-8">
+                <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-1.5 sm:px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0 hover:border-[#C4C4C4] h-8">
                   <Calendar className="w-3.5 h-3.5 text-[#666666] mr-1 hidden sm:block" />
                   <div className="relative flex items-center h-full">
-                    <span className="text-[12px] sm:text-[13px] text-[#333333] font-bold whitespace-nowrap text-center min-w-[65px]">
-                      {dueDateParts.date ? `${dueDateParts.date.split('-')[0].slice(-2)}/${dueDateParts.date.split('-')[1]}/${dueDateParts.date.split('-')[2]}` : '日付設定'}
+                    <span className="text-[12px] sm:text-[13px] text-[#333333] font-bold whitespace-nowrap text-center min-w-[36px] sm:min-w-[40px]">
+                      {dueDateParts.date ? `${dueDateParts.date.split('-')[1]}/${dueDateParts.date.split('-')[2]}` : '日付設定'}
                     </span>
                     <input type="date" value={dueDateParts.date} onChange={(e) => handleDateChange('date', e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                   </div>
                   <div className="w-px h-3 bg-[#D7DCD9] mx-1"></div>
-                  <select value={dueDateParts.hour} onChange={(e) => handleDateChange('hour', e.target.value)} className="bg-transparent text-[12px] sm:text-[13px] text-[#333333] outline-none font-bold appearance-none cursor-pointer h-full">
+                  <select value={dueDateParts.hour} onChange={(e) => handleDateChange('hour', e.target.value)} className="bg-transparent text-[12px] sm:text-[13px] text-[#333333] outline-none font-bold appearance-none cursor-pointer h-full text-center">
                     {[...Array(24)].map((_, i) => { const h = String(i).padStart(2, '0'); return <option key={h} value={h}>{h}</option>; })}
                   </select>
-                  <span className="text-[#666666] text-[12px] font-medium ml-0.5">時</span>
+                  <span className="text-[#666666] text-[11px] sm:text-[12px] font-medium ml-0.5">時</span>
                 </div>
 
-                <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-24 sm:w-28 px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[12px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8">
+                <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
                   <option value="freenote">フリーノート</option>
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
 
               {/* 固定の右側エリア */}
-              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 pl-1 sm:pl-2 ml-auto">
+              <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0 pl-1 sm:pl-2 ml-auto">
                 {/* 追加ツール */}
                 <div className="relative">
                   <button type="button" onClick={() => setShowToolMenu(!showToolMenu)} className={`flex items-center justify-center gap-1 px-2 h-8 border rounded-lg transition-colors text-[12px] font-bold ${showToolMenu ? 'bg-[#E0FFEE] text-[#00CC5B] border-[#00CC5B]' : 'bg-[#FFFFFF] text-[#666666] border-[#D7DCD9] hover:border-[#C4C4C4]'}`}>
