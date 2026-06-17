@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle, LogOut, Calendar, Clock, PenTool, Menu, GripVertical, ZoomIn, ZoomOut, Target, BookOpen, ExternalLink } from 'lucide-react';
+import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle, LogOut, Calendar, Clock, PenTool, Menu, GripVertical, ZoomIn, ZoomOut, BookOpen, ExternalLink } from 'lucide-react';
 
 // --- Firebase のインポート ---
 import { initializeApp } from 'firebase/app';
@@ -150,7 +150,7 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   const [categories, setCategories] = useState([]);
-  const [activeCategoryId, setActiveCategoryId] = useState('freenote');
+  const [activeCategoryId, setActiveCategoryId] = useState('all_list'); // 初期タブ
   const [notes, setNotes] = useState([]);
   const [links, setLinks] = useState([]);
   
@@ -211,19 +211,13 @@ export default function App() {
     if (container) container.scrollTop = currentScrollTop;
   };
 
+  // フリーノートの初期表示を左上に設定
   useEffect(() => {
     if (activeCategoryId === 'freenote' && freenoteRef.current) {
-      freenoteRef.current.scrollTop = 40;
-      freenoteRef.current.scrollLeft = 40;
+      freenoteRef.current.scrollTop = 0;
+      freenoteRef.current.scrollLeft = 0;
     }
   }, [activeCategoryId]);
-
-  const handleCenterCanvas = () => {
-    if (freenoteRef.current) {
-      freenoteRef.current.scrollTop = (2500 * freenoteZoom) - freenoteRef.current.clientHeight / 2;
-      freenoteRef.current.scrollLeft = (2500 * freenoteZoom) - freenoteRef.current.clientWidth / 2;
-    }
-  };
 
   useEffect(() => {
     if (!isConfigValid) return;
@@ -315,12 +309,12 @@ export default function App() {
   const handleDeleteCategory = async (id) => {
     if (!user || categories.length <= 1) return;
     await deleteDoc(getCategoryDoc(id));
-    setActiveCategoryId('freenote');
+    setActiveCategoryId('all_list');
   };
 
   const openAddModal = () => {
     setEditingNote(null);
-    const initialCategory = (activeCategoryId === 'freenote' || activeCategoryId === 'deadline' || activeCategoryId === 'linkbook') ? categories[0]?.id : activeCategoryId;
+    const initialCategory = (activeCategoryId === 'freenote' || activeCategoryId === 'deadline' || activeCategoryId === 'linkbook' || activeCategoryId === 'all_list') ? categories[0]?.id : activeCategoryId;
     setFormData({ title: '', categoryId: initialCategory, blocks: [{ id: generateId(), type: 'text', content: '', checked: false }], dueDate: '' });
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
@@ -394,7 +388,7 @@ export default function App() {
       const rect = e.currentTarget.getBoundingClientRect();
       const position = (e.clientY - rect.top) < rect.height / 2 ? 'top' : 'bottom';
       setCategoryDragOverIndicator({ id: categoryId, position });
-    } else if (!draggedCategoryId && categoryId !== activeCategoryId && categoryId !== 'deadline' && categoryId !== 'linkbook') {
+    } else if (!draggedCategoryId && !['deadline', 'linkbook', 'all_list', 'freenote'].includes(categoryId) && categoryId !== activeCategoryId) {
       setDragOverCategoryId(categoryId); 
     }
   };
@@ -405,7 +399,7 @@ export default function App() {
     setDragOverCategoryId(null);
     setCategoryDragOverIndicator(null);
     
-    if (targetCategoryId === 'deadline' || targetCategoryId === 'linkbook') return;
+    if (['deadline', 'linkbook', 'all_list', 'freenote'].includes(targetCategoryId)) return;
 
     const sourceCategoryId = e.dataTransfer.getData('categoryId');
     const sourceNoteId = e.dataTransfer.getData('noteId');
@@ -449,7 +443,7 @@ export default function App() {
   };
   const handleDragOverNote = (e, id) => {
     e.preventDefault();
-    if (draggedNoteId === id || activeCategoryId === 'deadline') return;
+    if (draggedNoteId === id || activeCategoryId === 'deadline' || activeCategoryId === 'all_list') return;
     const rect = e.currentTarget.getBoundingClientRect();
     const position = (e.clientY - rect.top) < rect.height / 2 ? 'top' : 'bottom';
     setDragOverIndicator({ id, position });
@@ -460,7 +454,7 @@ export default function App() {
     e.preventDefault();
     const indicator = dragOverIndicator;
     setDragOverIndicator(null);
-    if (activeCategoryId === 'deadline') return;
+    if (activeCategoryId === 'deadline' || activeCategoryId === 'all_list') return;
     
     const sourceId = e.dataTransfer.getData('noteId');
     if (!sourceId || sourceId === targetId || !user) return;
@@ -502,7 +496,6 @@ export default function App() {
   };
   
   const handleFreenoteDoubleClick = (e) => {
-    // 背景部分のクリックのみ反応させる
     if (!e.target.className.includes('pointer-events-auto') && !e.target.className.includes('radial-gradient')) return;
     const rect = freenoteRef.current.getBoundingClientRect();
     const x = (e.clientX - rect.left + freenoteRef.current.scrollLeft) / freenoteZoom;
@@ -815,7 +808,9 @@ export default function App() {
   }
 
   let activeNotes = [];
-  if (activeCategoryId === 'deadline') {
+  if (activeCategoryId === 'all_list') {
+    activeNotes = notes.filter(n => showCompleted ? true : !n.isCompleted);
+  } else if (activeCategoryId === 'deadline') {
     activeNotes = notes.filter(n => n.dueDate && (showCompleted ? true : !n.isCompleted)).sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate));
   } else if (activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook') {
     activeNotes = notes.filter(n => n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted));
@@ -857,6 +852,11 @@ export default function App() {
           </div>
           
           <div className="flex-1 overflow-y-auto custom-scrollbar py-4 px-3 flex flex-col gap-1">
+            <div onClick={() => handleTabClick('all_list')} className={`flex items-center gap-[12px] px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${activeCategoryId === 'all_list' ? 'bg-[#E0FFEE] text-[#00CC5B]' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}`}>
+              <AlignLeft className="w-5 h-5" />
+              <span className="font-bold text-[14px]">すべてのメモ</span>
+            </div>
+
             <div onClick={() => handleTabClick('freenote')} className={`flex items-center gap-[12px] px-3 py-2.5 rounded-xl transition-colors cursor-pointer ${activeCategoryId === 'freenote' ? 'bg-[#E0FFEE] text-[#00CC5B]' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}`}>
               <PenTool className="w-5 h-5" />
               <span className="font-bold text-[14px]">フリーノート</span>
@@ -934,7 +934,7 @@ export default function App() {
               <Menu className="w-6 h-6" />
             </button>
             <h2 className="text-[18px] sm:text-[20px] font-bold text-[#333333]">
-              {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : categories.find(c => c.id === activeCategoryId)?.name}
+              {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : categories.find(c => c.id === activeCategoryId)?.name}
             </h2>
           </div>
           
@@ -952,6 +952,56 @@ export default function App() {
         </header>
 
         <main className="flex-1 overflow-y-auto relative">
+          
+          {/* リスト表示（すべてのメモ） */}
+          {activeCategoryId === 'all_list' && (
+            <div className="max-w-7xl mx-auto h-full p-4 sm:p-6 flex flex-col">
+              <div className="bg-[#FFFFFF] rounded-xl shadow-sm border border-[#D7DCD9] overflow-hidden flex flex-col flex-1">
+                <div className="overflow-y-auto custom-scrollbar flex-1">
+                  <table className="w-full text-left text-[#333333] text-[13px] sm:text-[14px]">
+                    <thead className="bg-[#F7F9F8] sticky top-0 z-10 border-b border-[#D7DCD9]">
+                      <tr>
+                        <th className="px-4 py-3 font-bold w-12 text-center">完了</th>
+                        <th className="px-4 py-3 font-bold">タイトル</th>
+                        <th className="px-4 py-3 font-bold">ボード名</th>
+                        <th className="px-4 py-3 font-bold">期限</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeNotes.map(note => {
+                        const catName = note.categoryId === 'freenote' ? 'フリーノート' : categories.find(c => c.id === note.categoryId)?.name || '不明';
+                        const dueDateInfo = formatDueDate(note.dueDate);
+                        return (
+                          <tr key={note.id} onClick={() => openEditModal(note)} className="border-b border-[#D7DCD9] hover:bg-[#F7F9F8] cursor-pointer transition-colors group">
+                            <td className="px-4 py-3 text-center" onClick={(e) => { e.stopPropagation(); toggleComplete(e, note.id); }}>
+                              {note.isCompleted ? <CheckCircle2 className="w-5 h-5 text-[#00CC5B] mx-auto" /> : <Circle className="w-5 h-5 text-[#C4C4C4] group-hover:text-[#00CC5B] mx-auto" />}
+                            </td>
+                            <td className={`px-4 py-3 font-bold ${note.isCompleted ? 'text-[#666666] line-through' : ''}`}>
+                              {note.title || '無題'}
+                            </td>
+                            <td className="px-4 py-3 text-[#666666] whitespace-nowrap">
+                              {catName}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {dueDateInfo ? (
+                                <span className={`px-2 py-1 rounded text-[12px] font-bold ${dueDateInfo.isPast && !note.isCompleted ? 'bg-[#FFE600]/30 text-[#ED1C24]' : 'bg-[#E0FFEE] text-[#00AC4C]'}`}>
+                                  {dueDateInfo.text}
+                                </span>
+                              ) : (
+                                <span className="text-[#C4C4C4]">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  {activeNotes.length === 0 && <div className="p-8 text-center text-[#666666] font-medium">メモがありません。</div>}
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeCategoryId === 'freenote' && (
             <>
               <div className="w-full h-full overflow-auto custom-scrollbar" ref={freenoteRef} onDoubleClick={handleFreenoteDoubleClick}>
@@ -969,14 +1019,15 @@ export default function App() {
                       >
                         <div className="p-3">
                           <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-bold text-[#333333] text-[16px] truncate pr-2 leading-[1.6]">{note.title || '無題'}</h3>
+                            <h3 className="font-bold text-[#333333] text-[14px] truncate pr-2 leading-[1.6]">{note.title || '無題'}</h3>
                             <button onClick={(e) => { e.stopPropagation(); openEditModal(note); }} className="no-drag p-1 text-[#666666] hover:text-[#00CC5B] bg-[#F7F9F8] rounded-md shrink-0"><Edit2 className="w-4 h-4"/></button>
                           </div>
-                          <div className="max-h-32 overflow-hidden relative no-drag text-[14px]">
-                            {note.blocks?.slice(0, 3).map(block => (
+                          <div className="max-h-[400px] overflow-hidden relative no-drag text-[12px]">
+                            {/* 最大20行に変更 */}
+                            {note.blocks?.slice(0, 20).map(block => (
                               <div key={block.id} className="py-0.5">
-                                {block.type === 'text' && <div className="text-[#666666] line-clamp-2 leading-[1.6]"><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></div>}
-                                {block.type === 'list' && <div className="text-[#666666] flex gap-1 leading-[1.6]"><span className="text-[#666666] font-bold">•</span><span className="line-clamp-1">{block.content}</span></div>}
+                                {block.type === 'text' && <div className="text-[#666666] leading-[1.6]"><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></div>}
+                                {block.type === 'list' && <div className="text-[#666666] flex gap-1 leading-[1.6]"><span className="text-[#666666] font-bold">•</span><span><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span></div>}
                                 {block.type === 'image' && <div className="text-[#666666] flex items-center gap-1 leading-[1.6]"><ImageIcon className="w-3 h-3"/>画像</div>}
                               </div>
                             ))}
@@ -988,9 +1039,7 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <div className="absolute bottom-6 right-6 flex items-center gap-2 bg-white p-2 rounded-xl shadow-lg border border-[#D7DCD9] z-10">
-                <button onClick={handleCenterCanvas} className="p-2 hover:bg-[#F7F9F8] rounded-lg text-[#666666] transition-colors" title="中央に戻る"><Target className="w-5 h-5"/></button>
-                <div className="w-px h-6 bg-[#D7DCD9]"></div>
+              <div className="absolute bottom-6 right-6 flex items-center gap-2 bg-[#FFFFFF] p-2 rounded-xl shadow-lg border border-[#D7DCD9] z-10">
                 <button onClick={() => setFreenoteZoom(prev => Math.max(prev - 0.1, 0.1))} className="p-2 hover:bg-[#F7F9F8] rounded-lg text-[#666666]"><ZoomOut className="w-5 h-5"/></button>
                 <select value={freenoteZoom.toFixed(1)} onChange={e => setFreenoteZoom(Number(e.target.value))} className="bg-transparent font-bold text-[#333333] outline-none cursor-pointer text-center w-16 text-[14px]">
                   {[0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 2.0].map(v => (
@@ -1057,7 +1106,7 @@ export default function App() {
             </div>
           )}
 
-          {activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook' && (
+          {activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook' && activeCategoryId !== 'all_list' && (
             <div className="max-w-7xl mx-auto h-full p-4 sm:p-6">
               {activeNotes.length === 0 ? (
                 <div onClick={() => openAddModal()} className="text-center py-16 border-2 border-dashed border-[#D7DCD9] rounded-2xl text-[#666666] hover:border-[#00CC5B] hover:text-[#00AC4C] transition-colors cursor-pointer max-w-lg mx-auto mt-10">
@@ -1098,7 +1147,7 @@ export default function App() {
                           </div>
                         )}
                         <div className="flex items-start justify-between gap-1 sm:gap-2 mb-2">
-                          <h3 className={`font-bold leading-[1.6] line-clamp-2 pr-5 sm:pr-6 text-[16px] sm:text-[18px] ${note.isCompleted ? 'text-[#666666] line-through' : 'text-[#333333]'}`}>
+                          <h3 className={`font-bold leading-[1.6] line-clamp-2 pr-5 sm:pr-6 text-[14px] sm:text-[16px] ${note.isCompleted ? 'text-[#666666] line-through' : 'text-[#333333]'}`}>
                             {note.title}
                           </h3>
                           <button onClick={(e) => toggleComplete(e, note.id)} className={`absolute top-2 right-2 sm:top-3 sm:right-3 transition-colors p-0.5 sm:p-1 rounded-full shadow-sm border z-10 ${note.isCompleted ? 'text-[#00CC5B] bg-[#E0FFEE] border-[#00CC5B]' : 'text-[#C4C4C4] bg-[#FFFFFF] border-[#D7DCD9]'}`}>
@@ -1109,15 +1158,15 @@ export default function App() {
                           <div className="space-y-0 pb-6">
                             {note.blocks?.map(block => (
                               <div key={block.id} className="py-0">
-                                {block.type === 'text' && <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] sm:text-[16px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`} />}
+                                {block.type === 'text' && <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[12px] sm:text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`} />}
                                 {block.type === 'list' && (
-                                  <div className={`flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] sm:text-[16px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`}>
+                                  <div className={`flex items-start gap-[4px] font-medium leading-[1.6] text-[12px] sm:text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`}>
                                     <span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
                                   </div>
                                 )}
                                 {block.type === 'checkbox' && (
-                                  <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px] sm:text-[16px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
-                                    {block.checked ? <CheckCircle2 className="w-4 h-4 sm:w-[18px] sm:h-[18px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-4 h-4 sm:w-[18px] sm:h-[18px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
+                                  <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[12px] sm:text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
+                                    {block.checked ? <CheckCircle2 className="w-4 h-4 sm:w-[16px] sm:h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-4 h-4 sm:w-[16px] sm:h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
                                     <span className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#333333]'} leading-[1.6]`}>
                                       <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} />
                                     </span>
@@ -1147,7 +1196,7 @@ export default function App() {
             <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex flex-col gap-3 z-10 relative">
               <div className="flex flex-wrap items-center justify-between gap-y-3 gap-x-2">
                 <div className="flex-1 flex flex-wrap items-center gap-[8px] min-w-[200px]">
-                  <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[150px] px-1 py-1 text-[20px] sm:text-[24px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
+                  <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[150px] px-1 py-1 text-[18px] sm:text-[20px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
                   
                   <div className="flex items-center gap-1 bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-2 py-1.5 focus-within:border-[#00CC5B] transition-colors shrink-0">
                     <Calendar className="w-4 h-4 text-[#666666] hidden sm:block" />
@@ -1229,7 +1278,7 @@ export default function App() {
                             onFocus={(e) => saveCursorPosition(e, block.id)}
                             onPaste={handlePaste}
                             className={`w-full bg-transparent resize-none outline-none py-0.5 m-0 font-medium leading-[1.6] overflow-hidden min-h-[28px]
-                              ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'} text-[14px] sm:text-[16px]`}
+                              ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'} text-[13px] sm:text-[14px]`}
                             rows={1}
                             placeholder={block.type === 'text' ? (index === 0 ? "ここからメモを入力..." : "") : "項目を入力..."}
                           />
