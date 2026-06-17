@@ -853,21 +853,20 @@ export default function App() {
     filtered.sort((a, b) => {
       const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
       const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      const orderA = categoryOrderMap[a.categoryId] !== undefined ? categoryOrderMap[a.categoryId] : Infinity;
-      const orderB = categoryOrderMap[b.categoryId] !== undefined ? categoryOrderMap[b.categoryId] : Infinity;
+      const orderA = a.categoryId === 'freenote' ? -1 : (categoryOrderMap[a.categoryId] !== undefined ? categoryOrderMap[a.categoryId] : Infinity);
+      const orderB = b.categoryId === 'freenote' ? -1 : (categoryOrderMap[b.categoryId] !== undefined ? categoryOrderMap[b.categoryId] : Infinity);
 
+      // Infinity - Infinity は NaN になりソートが壊れるため、大小比較を使用
       if (allListSortConfig.key === 'dueDate') {
-        const diff = dateA - dateB;
-        if (diff !== 0) return allListSortConfig.direction === 'asc' ? diff : -diff;
-        return orderA - orderB;
+        if (dateA !== dateB) return allListSortConfig.direction === 'asc' ? (dateA < dateB ? -1 : 1) : (dateA < dateB ? 1 : -1);
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.order || 0) - (b.order || 0);
       } else if (allListSortConfig.key === 'category') {
-        const diff = orderA - orderB;
-        if (diff !== 0) return allListSortConfig.direction === 'asc' ? diff : -diff;
-        return dateA - dateB;
-      } else {
-        if (dateA !== dateB) return dateA - dateB;
-        return orderA - orderB;
+        if (orderA !== orderB) return allListSortConfig.direction === 'asc' ? orderA - orderB : orderB - orderA;
+        if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+        return (a.order || 0) - (b.order || 0);
       }
+      return 0;
     });
     activeNotes = filtered;
   } else if (activeCategoryId === 'deadline') {
