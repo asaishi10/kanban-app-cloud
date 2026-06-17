@@ -181,8 +181,8 @@ export default function App() {
   const [draggedLinkId, setDraggedLinkId] = useState(null);
   const [linkDragOverIndicator, setLinkDragOverIndicator] = useState(null);
 
-  // すべてのメモのソート用 State
-  const [allListSortConfig, setAllListSortConfig] = useState({ key: 'default', direction: 'asc' });
+  // ★ 追加: 確認ダイアログ用 State
+  const [confirmDialog, setConfirmDialog] = useState({ isOpen: false, message: '', targetId: null, actionType: null });
 
   // フリーノート用 State
   const freenoteRef = useRef(null);
@@ -215,10 +215,15 @@ export default function App() {
     if (container) container.scrollTop = currentScrollTop;
   };
 
+  // フリーノートの初期表示を左上に確実に設定する
   useEffect(() => {
-    if (activeCategoryId === 'freenote' && freenoteRef.current) {
-      freenoteRef.current.scrollTop = 40;
-      freenoteRef.current.scrollLeft = 40;
+    if (activeCategoryId === 'freenote') {
+      setTimeout(() => {
+        if (freenoteRef.current) {
+          freenoteRef.current.scrollTop = 0;
+          freenoteRef.current.scrollLeft = 0;
+        }
+      }, 50);
     }
   }, [activeCategoryId]);
 
@@ -314,7 +319,9 @@ export default function App() {
   const handleDeleteCategory = async (id) => {
     if (!user || categories.length <= 1) return;
     await deleteDoc(getCategoryDoc(id));
-    setActiveCategoryId('all_list');
+    if (activeCategoryId === id) {
+      setActiveCategoryId('all_list');
+    }
   };
 
   const openAddModal = () => {
@@ -571,6 +578,24 @@ export default function App() {
     if (!user) return;
     await deleteDoc(getLinkDoc(id));
     setIsLinkModalOpen(false);
+  };
+
+  // ★ 追加: 削除確認処理
+  const requestDeleteCategory = (id, name) => setConfirmDialog({ isOpen: true, message: `ボード「${name}」を削除しますか？`, targetId: id, actionType: 'category' });
+  const requestDeleteNote = (id) => setConfirmDialog({ isOpen: true, message: 'このメモを削除しますか？', targetId: id, actionType: 'note' });
+  const requestDeleteLink = (id) => setConfirmDialog({ isOpen: true, message: 'このリンクを削除しますか？', targetId: id, actionType: 'link' });
+
+  const executeConfirmAction = async () => {
+    const { actionType, targetId } = confirmDialog;
+    if (actionType === 'category') {
+      await handleDeleteCategory(targetId);
+    } else if (actionType === 'note') {
+      await deleteNote(targetId);
+      setIsModalOpen(false);
+    } else if (actionType === 'link') {
+      await deleteLink(targetId);
+    }
+    setConfirmDialog({ isOpen: false, message: '', targetId: null, actionType: null });
   };
 
   // --- ブロックエディタ ---
@@ -848,7 +873,8 @@ export default function App() {
   const handleDateChange = (type, val) => {
     const newDateStr = type === 'date' ? val : (dueDateParts.date || new Date().toISOString().split('T')[0]);
     const newHour = type === 'hour' ? val : dueDateParts.hour;
-    const newMinute = type === 'minute' ? val : dueDateParts.minute;
+    // 分は常に00に固定する
+    const newMinute = '00';
     if (newDateStr) {
       const dt = new Date(`${newDateStr}T${newHour}:${newMinute}:00`);
       if (!isNaN(dt.getTime())) setFormData({...formData, dueDate: dt.toISOString()});
@@ -949,7 +975,7 @@ export default function App() {
                     {isCategoryEditMode && (
                       <div className="flex items-center ml-1 shrink-0 gap-1">
                         <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#00CC5B] hover:bg-[#E0FFEE] transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
-                        {categories.length > 1 && <button onClick={(e) => { e.stopPropagation(); handleDeleteCategory(category.id); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#ED1C24] transition-colors rounded"><X className="w-3.5 h-3.5" /></button>}
+                        {categories.length > 1 && <button onClick={(e) => { e.stopPropagation(); requestDeleteCategory(category.id, category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#ED1C24] transition-colors rounded"><X className="w-3.5 h-3.5" /></button>}
                       </div>
                     )}
                   </>
@@ -1059,7 +1085,7 @@ export default function App() {
                       return (
                         <div 
                           key={note.id}
-                          style={{ position: 'absolute', left: note.x || 40, top: note.y || 40, width: 320 }}
+                          style={{ position: 'absolute', left: note.x || 24, top: note.y || 24, width: 320 }}
                           onPointerDown={(e) => handleFreenotePointerDown(e, note)}
                           onPointerMove={handleFreenotePointerMove}
                           onPointerUp={handleFreenotePointerUp}
@@ -1267,48 +1293,44 @@ export default function App() {
           <div className="bg-[#FFFFFF] sm:rounded-2xl shadow-2xl w-full max-w-2xl h-full sm:h-[95vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
             
             <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex flex-col gap-3 z-10 relative">
-              <div className="flex flex-wrap items-center justify-between gap-y-3 gap-x-2">
-                <div className="flex-1 flex flex-wrap items-center gap-[8px] min-w-[200px]">
-                  <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[150px] px-1 py-1 text-[18px] sm:text-[20px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
-                  
-                  <div className="flex items-center gap-1 bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-2 py-1.5 focus-within:border-[#00CC5B] transition-colors shrink-0">
-                    <Calendar className="w-4 h-4 text-[#666666] hidden sm:block" />
-                    <input type="date" value={dueDateParts.date} onChange={(e) => handleDateChange('date', e.target.value)} className="bg-transparent text-[12px] sm:text-[14px] text-[#333333] outline-none font-medium" />
-                    <select value={dueDateParts.hour} onChange={(e) => handleDateChange('hour', e.target.value)} className="bg-transparent text-[12px] sm:text-[14px] text-[#333333] outline-none font-medium appearance-none">
-                      {[...Array(24)].map((_, i) => { const h = String(i).padStart(2, '0'); return <option key={h} value={h}>{h}</option>; })}
-                    </select>
-                    <span className="text-[#666666]">:</span>
-                    <select value={dueDateParts.minute} onChange={(e) => handleDateChange('minute', e.target.value)} className="bg-transparent text-[12px] sm:text-[14px] text-[#333333] outline-none font-medium appearance-none">
-                      <option value="00">00</option>
-                      <option value="15">15</option>
-                      <option value="30">30</option>
-                      <option value="45">45</option>
-                    </select>
-                  </div>
-
-                  <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-24 sm:w-32 px-2 sm:px-3 py-1.5 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[12px] sm:text-[14px] text-[#333333] shrink-0 font-medium">
-                    <option value="freenote">フリーノート</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-
+              
+              {/* 上段：タイトルと操作ボタン */}
+              <div className="flex items-center gap-2">
+                <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-0 px-1 py-1 text-[18px] sm:text-[20px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
+                
                 <div className="flex items-center gap-1 shrink-0 ml-auto">
-                  {editingNote && <button type="button" onClick={() => deleteNote(editingNote.id)} className="text-[#666666] hover:text-[#ED1C24] hover:bg-[#FFFFFF] p-1.5 rounded-lg transition-colors"><Trash2 className="w-5 h-5" /></button>}
+                  {editingNote && <button type="button" onClick={() => requestDeleteNote(editingNote.id)} className="text-[#666666] hover:text-[#ED1C24] hover:bg-[#FFFFFF] p-1.5 rounded-lg transition-colors"><Trash2 className="w-5 h-5" /></button>}
                   <button type="button" onClick={() => setIsModalOpen(false)} className="text-[#666666] hover:bg-[#FFFFFF] p-1.5 rounded-lg transition-colors"><X className="w-5 h-5" /></button>
+                  <button type="button" onClick={saveNote} className="ml-1 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#00CC5B] hover:bg-[#00AC4C] text-[#FFFFFF] rounded-lg font-bold transition-colors flex items-center gap-[4px] text-[12px] sm:text-[14px]">保存</button>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between pt-1">
+              {/* 下段：期限、カテゴリー、ブロック追加 */}
+              <div className="flex items-center justify-between pt-1 overflow-x-auto custom-scrollbar pb-1">
                 <div className="flex items-center gap-[4px] sm:gap-[8px]">
-                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addBlock('text')} title="テキストを追加" className="p-1.5 sm:p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all"><AlignLeft className="w-5 h-5" /></button>
-                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addBlock('list')} title="リストを追加" className="p-1.5 sm:p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all"><List className="w-5 h-5" /></button>
-                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addBlock('checkbox')} title="チェックボックスを追加" className="p-1.5 sm:p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all"><CheckSquare className="w-5 h-5" /></button>
-                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => fileInputRef.current?.click()} title="画像を追加" className="p-1.5 sm:p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all"><ImageIcon className="w-5 h-5" /></button>
+                  
+                  {/* メタデータ設定 */}
+                  <div className="flex items-center gap-1 bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0">
+                    <Calendar className="w-3.5 h-3.5 text-[#666666] hidden sm:block" />
+                    <input type="date" value={dueDateParts.date} onChange={(e) => handleDateChange('date', e.target.value)} className="bg-transparent text-[12px] sm:text-[14px] text-[#333333] outline-none font-medium w-[110px] sm:w-[120px]" />
+                    <select value={dueDateParts.hour} onChange={(e) => handleDateChange('hour', e.target.value)} className="bg-transparent text-[12px] sm:text-[14px] text-[#333333] outline-none font-medium appearance-none pl-1">
+                      {[...Array(24)].map((_, i) => { const h = String(i).padStart(2, '0'); return <option key={h} value={h}>{h}</option>; })}
+                    </select>
+                    <span className="text-[#666666] text-[12px] sm:text-[14px] font-medium pr-1">時</span>
+                  </div>
+
+                  <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-24 sm:w-28 px-2 py-1 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[12px] sm:text-[14px] text-[#333333] shrink-0 font-medium">
+                    <option value="freenote">フリーノート</option>
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  
+                  <div className="w-px h-5 bg-[#D7DCD9] mx-1 shrink-0"></div>
+
+                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addBlock('text')} title="テキストを追加" className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all shrink-0"><AlignLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addBlock('list')} title="リストを追加" className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all shrink-0"><List className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addBlock('checkbox')} title="チェックボックスを追加" className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all shrink-0"><CheckSquare className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => fileInputRef.current?.click()} title="画像を追加" className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all shrink-0"><ImageIcon className="w-4 h-4 sm:w-5 sm:h-5" /></button>
                   <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
-                </div>
-                <div className="flex items-center gap-[8px]">
-                  <button type="button" onClick={() => setIsModalOpen(false)} className="px-3 py-1.5 sm:px-4 sm:py-2 text-[#666666] bg-[#FFFFFF] border border-[#D7DCD9] hover:bg-[#E0FFEE] hover:text-[#00AC4C] hover:border-[#00CC5B] rounded-lg font-bold transition-colors text-[12px] sm:text-[14px]">キャンセル</button>
-                  <button type="button" onClick={saveNote} className="px-3 py-1.5 sm:px-5 sm:py-2 bg-[#00CC5B] hover:bg-[#00AC4C] text-[#FFFFFF] rounded-lg font-bold transition-colors flex items-center gap-[4px] text-[12px] sm:text-[14px]"><Check className="w-4 h-4" /> 保存</button>
                 </div>
               </div>
             </div>
@@ -1406,12 +1428,29 @@ export default function App() {
 
             <div className="flex items-center justify-between mt-4">
               {linkFormData.id ? (
-                <button onClick={() => deleteLink(linkFormData.id)} className="text-[#ED1C24] hover:bg-[#FFE600]/30 px-3 py-2 rounded-lg text-[14px] font-bold transition-colors">削除</button>
+                <button onClick={() => requestDeleteLink(linkFormData.id)} className="text-[#ED1C24] hover:bg-[#FFE600]/30 px-3 py-2 rounded-lg text-[14px] font-bold transition-colors">削除</button>
               ) : <div></div>}
               <div className="flex items-center gap-2">
                 <button onClick={() => setIsLinkModalOpen(false)} className="px-4 py-2 text-[#666666] bg-[#FFFFFF] border border-[#D7DCD9] hover:bg-[#F7F9F8] rounded-lg font-bold text-[14px]">キャンセル</button>
                 <button onClick={saveLink} disabled={!linkFormData.word || !linkFormData.url} className="px-5 py-2 bg-[#00CC5B] hover:bg-[#00AC4C] disabled:bg-[#C4C4C4] text-[#FFFFFF] rounded-lg font-bold text-[14px] transition-colors">保存</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 確認ダイアログ */}
+      {confirmDialog.isOpen && (
+        <div className="fixed inset-0 bg-[#333333]/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
+          <div className="bg-[#FFFFFF] rounded-2xl shadow-xl w-full max-w-sm p-6 flex flex-col gap-4 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-3 text-[#ED1C24]">
+              <AlertCircle className="w-6 h-6" />
+              <h3 className="font-bold text-[18px]">確認</h3>
+            </div>
+            <p className="text-[#333333] font-medium leading-[1.6]">{confirmDialog.message}</p>
+            <div className="flex items-center justify-end gap-2 mt-4">
+              <button onClick={() => setConfirmDialog({ isOpen: false, message: '', targetId: null, actionType: null })} className="px-4 py-2 text-[#666666] hover:bg-[#F7F9F8] rounded-lg font-bold text-[14px] transition-colors border border-[#D7DCD9]">キャンセル</button>
+              <button onClick={executeConfirmAction} className="px-4 py-2 bg-[#ED1C24] hover:bg-[#C81016] text-[#FFFFFF] rounded-lg font-bold text-[14px] transition-colors">削除する</button>
             </div>
           </div>
         </div>
