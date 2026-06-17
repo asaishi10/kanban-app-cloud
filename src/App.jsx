@@ -1036,27 +1036,28 @@ export default function App() {
                   <table className="w-full text-left text-[#333333] text-[13px]">
                     <thead className="bg-[#FFFFFF] sticky top-0 z-10 shadow-sm">
                       <tr>
-                        <th className="px-2 py-1.5 font-bold w-12 text-center text-[#666666]">完了</th>
-                        <th className="px-2 py-1.5 font-bold text-[#666666]">タイトル</th>
-                        <th className="px-2 py-1.5 font-bold w-24 sm:w-32 text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('dueDate')}>
+                        <th className="px-2 py-1.5 font-bold w-10 sm:w-12 text-center text-[#666666]">完了</th>
+                        <th className="px-2 py-1.5 font-bold w-20 sm:w-28 text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('dueDate')}>
                           期限 {allListSortConfig.key === 'dueDate' ? (allListSortConfig.direction === 'asc' ? '▲' : '▼') : ''}
                         </th>
-                        <th className="px-2 py-1.5 font-bold w-28 sm:w-40 text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('category')}>
+                        <th className="px-2 py-1.5 font-bold w-24 sm:w-32 text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('category')}>
                           ボード名 {allListSortConfig.key === 'category' ? (allListSortConfig.direction === 'asc' ? '▲' : '▼') : ''}
                         </th>
+                        <th className="px-2 py-1.5 font-bold w-32 sm:w-48 text-[#666666]">タイトル</th>
+                        <th className="px-2 py-1.5 font-bold text-[#666666]">本文</th>
                       </tr>
                     </thead>
                     <tbody>
                       {activeNotes.map((note, index) => {
                         const catName = note.categoryId === 'freenote' ? 'フリーノート' : categories.find(c => c.id === note.categoryId)?.name || '不明';
                         const dueDateInfo = formatDueDate(note.dueDate);
+                        // 本文からテキスト情報だけを抽出し、改行や余分な空白を取り除いて1行にする
+                        const plainText = note.blocks?.filter(b => b.type === 'text' || b.type === 'list' || b.type === 'checkbox').map(b => b.content).join(' ').replace(/\s+/g, ' ').trim();
+                        
                         return (
                           <tr key={note.id} onClick={() => openEditModal(note)} className={`cursor-pointer transition-colors group ${index % 2 === 0 ? 'bg-[#FFFFFF]' : 'bg-[#F7F9F8]/50'} hover:bg-[#E0FFEE]/30`}>
                             <td className="px-2 py-1.5 text-center" onClick={(e) => { e.stopPropagation(); toggleComplete(e, note.id); }}>
                               {note.isCompleted ? <CheckCircle2 className="w-4 h-4 text-[#00CC5B] mx-auto" /> : <Circle className="w-4 h-4 text-[#C4C4C4] group-hover:text-[#00CC5B] mx-auto" />}
-                            </td>
-                            <td className={`px-2 py-1.5 font-bold truncate max-w-[200px] sm:max-w-[300px] ${note.isCompleted ? 'text-[#666666] line-through' : ''}`}>
-                              {note.title || '無題'}
                             </td>
                             <td className="px-2 py-1.5 whitespace-nowrap">
                               {dueDateInfo ? (
@@ -1067,8 +1068,14 @@ export default function App() {
                                 <span className="text-[#C4C4C4]">-</span>
                               )}
                             </td>
-                            <td className="px-2 py-1.5 text-[#666666] whitespace-nowrap text-[12px] font-medium">
+                            <td className="px-2 py-1.5 text-[#666666] text-[12px] font-medium truncate max-w-[80px] sm:max-w-[120px]">
                               {catName}
+                            </td>
+                            <td className={`px-2 py-1.5 font-bold truncate max-w-[100px] sm:max-w-[180px] ${note.isCompleted ? 'text-[#666666] line-through' : ''}`}>
+                              {note.title || '無題'}
+                            </td>
+                            <td className={`px-2 py-1.5 truncate max-w-[120px] sm:max-w-[250px] lg:max-w-[400px] text-[12px] ${note.isCompleted ? 'text-[#C4C4C4]' : 'text-[#666666]'}`}>
+                              {plainText || <span className="text-[#C4C4C4]">-</span>}
                             </td>
                           </tr>
                         );
