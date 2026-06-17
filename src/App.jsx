@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle, LogOut, Calendar, Clock, PenTool, Menu, GripVertical, ZoomIn, ZoomOut, BookOpen, ExternalLink } from 'lucide-react';
+import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle, LogOut, Calendar, Clock, PenTool, Menu, GripVertical, ZoomIn, ZoomOut, Target, BookOpen, ExternalLink } from 'lucide-react';
 
 // --- Firebase のインポート ---
 import { initializeApp } from 'firebase/app';
@@ -147,11 +147,11 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // ★ 初期値を false に変更（ドロワーとして被さるため、最初は閉じておく）
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isCategoryEditMode, setIsCategoryEditMode] = useState(false);
   
   const [categories, setCategories] = useState([]);
-  const [activeCategoryId, setActiveCategoryId] = useState('all_list'); // 初期タブ
+  const [activeCategoryId, setActiveCategoryId] = useState('all_list');
   const [notes, setNotes] = useState([]);
   const [links, setLinks] = useState([]);
   
@@ -180,6 +180,9 @@ export default function App() {
   const [linkFormData, setLinkFormData] = useState({ id: '', word: '', url: '', groupName: 'すべて' });
   const [draggedLinkId, setDraggedLinkId] = useState(null);
   const [linkDragOverIndicator, setLinkDragOverIndicator] = useState(null);
+
+  // すべてのメモのソート用 State
+  const [allListSortConfig, setAllListSortConfig] = useState({ key: 'default', direction: 'asc' });
 
   // フリーノート用 State
   const freenoteRef = useRef(null);
@@ -212,11 +215,10 @@ export default function App() {
     if (container) container.scrollTop = currentScrollTop;
   };
 
-  // フリーノートの初期表示を左上に設定
   useEffect(() => {
     if (activeCategoryId === 'freenote' && freenoteRef.current) {
-      freenoteRef.current.scrollTop = 0;
-      freenoteRef.current.scrollLeft = 0;
+      freenoteRef.current.scrollTop = 40;
+      freenoteRef.current.scrollLeft = 40;
     }
   }, [activeCategoryId]);
 
@@ -288,6 +290,7 @@ export default function App() {
     setActiveCategoryId(categoryId);
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
+    setIsSidebarOpen(false); // ★ タブクリック時にサイドバーを閉じる
   };
 
   const handleAddCategory = async () => {
@@ -299,6 +302,7 @@ export default function App() {
     handleTabClick(newId);
     setEditingCategoryId(newId);
     setEditingCategoryName(newCategory.name);
+    setIsCategoryEditMode(true);
   };
 
   const saveCategoryName = async (id) => {
@@ -372,6 +376,7 @@ export default function App() {
 
   // --- ドラッグ＆ドロップ（カテゴリー） ---
   const handleCategoryDragStart = (e, id) => {
+    if (!isCategoryEditMode) { e.preventDefault(); return; }
     e.stopPropagation();
     e.dataTransfer.setData('categoryId', id);
     setDraggedCategoryId(id);
@@ -774,6 +779,15 @@ export default function App() {
     }
   };
 
+  // すべてのメモのソートハンドラ
+  const handleSort = (key) => {
+    if (allListSortConfig.key === key) {
+      setAllListSortConfig({ key, direction: allListSortConfig.direction === 'asc' ? 'desc' : 'asc' });
+    } else {
+      setAllListSortConfig({ key, direction: 'asc' });
+    }
+  };
+
   if (!isConfigValid) {
     return (
       <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333] p-6">
@@ -799,18 +813,31 @@ export default function App() {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#666666]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#00CC5B] mb-4" />
-        <p className="font-medium text-[16px]">同期中...</p>
-      </div>
-    );
-  }
-
   let activeNotes = [];
   if (activeCategoryId === 'all_list') {
-    activeNotes = notes.filter(n => showCompleted ? true : !n.isCompleted);
+    let filtered = notes.filter(n => showCompleted ? true : !n.isCompleted);
+    const categoryOrderMap = categories.reduce((acc, cat) => { acc[cat.id] = cat.order; return acc; }, {});
+    
+    filtered.sort((a, b) => {
+      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      const orderA = categoryOrderMap[a.categoryId] !== undefined ? categoryOrderMap[a.categoryId] : Infinity;
+      const orderB = categoryOrderMap[b.categoryId] !== undefined ? categoryOrderMap[b.categoryId] : Infinity;
+
+      if (allListSortConfig.key === 'dueDate') {
+        const diff = dateA - dateB;
+        if (diff !== 0) return allListSortConfig.direction === 'asc' ? diff : -diff;
+        return orderA - orderB;
+      } else if (allListSortConfig.key === 'category') {
+        const diff = orderA - orderB;
+        if (diff !== 0) return allListSortConfig.direction === 'asc' ? diff : -diff;
+        return dateA - dateB;
+      } else {
+        if (dateA !== dateB) return dateA - dateB;
+        return orderA - orderB;
+      }
+    });
+    activeNotes = filtered;
   } else if (activeCategoryId === 'deadline') {
     activeNotes = notes.filter(n => n.dueDate && (showCompleted ? true : !n.isCompleted)).sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate));
   } else if (activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook') {
@@ -882,21 +909,27 @@ export default function App() {
 
             <div className="px-3 pt-2 pb-1 text-[12px] font-bold text-[#C4C4C4] flex items-center justify-between">
               ボート一覧
-              <button onClick={handleAddCategory} className="hover:text-[#00CC5B] transition-colors"><Plus className="w-4 h-4"/></button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setIsCategoryEditMode(!isCategoryEditMode)} className={`hover:text-[#00CC5B] transition-colors ${isCategoryEditMode ? 'text-[#00CC5B]' : ''}`}>
+                  {isCategoryEditMode ? '完了' : '編集'}
+                </button>
+                <button onClick={handleAddCategory} className="hover:text-[#00CC5B] transition-colors"><Plus className="w-4 h-4"/></button>
+              </div>
             </div>
 
             {categories.map(category => (
               <div
                 key={category.id}
-                draggable
+                draggable={isCategoryEditMode}
                 onDragStart={(e) => handleCategoryDragStart(e, category.id)}
                 onDragEnd={handleCategoryDragEnd}
-                onClick={() => handleTabClick(category.id)}
+                onClick={() => { if (!isCategoryEditMode) handleTabClick(category.id); }}
                 onDragOver={(e) => handleCategoryDragOver(e, category.id)}
                 onDragLeave={() => { setDragOverCategoryId(null); setCategoryDragOverIndicator(null); }}
                 onDrop={(e) => handleCategoryDrop(e, category.id)}
-                className={`flex items-center gap-[8px] px-3 py-2 rounded-xl transition-colors cursor-pointer group relative
-                  ${activeCategoryId === category.id ? 'bg-[#E0FFEE] text-[#00CC5B]' : dragOverCategoryId === category.id ? 'bg-[#E0FFEE] text-[#00AC4C] border border-[#00CC5B] scale-105' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}
+                className={`flex items-center gap-[8px] px-3 py-2 rounded-xl transition-colors group relative
+                  ${!isCategoryEditMode ? 'cursor-pointer' : ''}
+                  ${activeCategoryId === category.id && !isCategoryEditMode ? 'bg-[#E0FFEE] text-[#00CC5B]' : dragOverCategoryId === category.id ? 'bg-[#E0FFEE] text-[#00AC4C] border border-[#00CC5B] scale-105' : 'text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333]'}
                 `}
               >
                 {categoryDragOverIndicator?.id === category.id && categoryDragOverIndicator?.position === 'top' && (
@@ -905,16 +938,18 @@ export default function App() {
                 {categoryDragOverIndicator?.id === category.id && categoryDragOverIndicator?.position === 'bottom' && (
                   <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mb-[2px]"></div>
                 )}
+                
+                {isCategoryEditMode && <GripVertical className="w-4 h-4 text-[#C4C4C4] cursor-grab active:cursor-grabbing shrink-0" />}
+
                 {editingCategoryId === category.id ? (
                   <input type="text" value={editingCategoryName} onChange={(e) => setEditingCategoryName(e.target.value)} onBlur={() => saveCategoryName(category.id)} onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)} autoFocus className="border border-[#00CC5B] rounded px-2 py-0.5 text-[14px] outline-none bg-[#FFFFFF] w-full" />
                 ) : (
                   <>
-                    <GripVertical className="w-3.5 h-3.5 opacity-0 group-hover:opacity-40 shrink-0 cursor-grab active:cursor-grabbing"/>
                     <span className="font-bold text-[14px] select-none flex-1 truncate">{category.name}</span>
-                    {activeCategoryId === category.id && (
-                      <div className="flex items-center ml-1 shrink-0">
-                        <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }} className="p-1 text-[#666666] hover:text-[#00CC5B] transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
-                        {categories.length > 1 && <button onClick={(e) => { e.stopPropagation(); handleDeleteCategory(category.id); }} className="p-1 text-[#666666] hover:text-[#ED1C24] transition-colors rounded"><X className="w-3.5 h-3.5" /></button>}
+                    {isCategoryEditMode && (
+                      <div className="flex items-center ml-1 shrink-0 gap-1">
+                        <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#00CC5B] hover:bg-[#E0FFEE] transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
+                        {categories.length > 1 && <button onClick={(e) => { e.stopPropagation(); handleDeleteCategory(category.id); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#ED1C24] transition-colors rounded"><X className="w-3.5 h-3.5" /></button>}
                       </div>
                     )}
                   </>
@@ -932,7 +967,7 @@ export default function App() {
           </div>
       </aside>
 
-      {/* メイン画面（★ 押し出されないように w-full に変更） */}
+      {/* メイン画面（常にフル幅） */}
       <div className="flex-1 flex flex-col w-full h-full overflow-hidden relative">
         {/* ヘッダー */}
         <header className="bg-[#FFFFFF] border-b border-[#D7DCD9] h-16 flex items-center justify-between px-4 sm:px-6 shrink-0 z-10">
@@ -965,38 +1000,42 @@ export default function App() {
             <div className="max-w-7xl mx-auto h-full p-4 sm:p-6 flex flex-col">
               <div className="bg-[#FFFFFF] rounded-xl shadow-sm border border-[#D7DCD9] overflow-hidden flex flex-col flex-1">
                 <div className="overflow-y-auto custom-scrollbar flex-1">
-                  <table className="w-full text-left text-[#333333] text-[13px] sm:text-[14px]">
-                    <thead className="bg-[#F7F9F8] sticky top-0 z-10 border-b border-[#D7DCD9]">
+                  <table className="w-full text-left text-[#333333] text-[13px]">
+                    <thead className="bg-[#FFFFFF] sticky top-0 z-10 shadow-sm">
                       <tr>
-                        <th className="px-4 py-3 font-bold w-12 text-center">完了</th>
-                        <th className="px-4 py-3 font-bold">タイトル</th>
-                        <th className="px-4 py-3 font-bold">ボード名</th>
-                        <th className="px-4 py-3 font-bold">期限</th>
+                        <th className="px-2 py-1.5 font-bold w-12 text-center text-[#666666]">完了</th>
+                        <th className="px-2 py-1.5 font-bold text-[#666666]">タイトル</th>
+                        <th className="px-2 py-1.5 font-bold text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('dueDate')}>
+                          期限 {allListSortConfig.key === 'dueDate' ? (allListSortConfig.direction === 'asc' ? '▲' : '▼') : ''}
+                        </th>
+                        <th className="px-2 py-1.5 font-bold text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('category')}>
+                          ボード名 {allListSortConfig.key === 'category' ? (allListSortConfig.direction === 'asc' ? '▲' : '▼') : ''}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {activeNotes.map(note => {
+                      {activeNotes.map((note, index) => {
                         const catName = note.categoryId === 'freenote' ? 'フリーノート' : categories.find(c => c.id === note.categoryId)?.name || '不明';
                         const dueDateInfo = formatDueDate(note.dueDate);
                         return (
-                          <tr key={note.id} onClick={() => openEditModal(note)} className="border-b border-[#D7DCD9] hover:bg-[#F7F9F8] cursor-pointer transition-colors group">
-                            <td className="px-4 py-3 text-center" onClick={(e) => { e.stopPropagation(); toggleComplete(e, note.id); }}>
-                              {note.isCompleted ? <CheckCircle2 className="w-5 h-5 text-[#00CC5B] mx-auto" /> : <Circle className="w-5 h-5 text-[#C4C4C4] group-hover:text-[#00CC5B] mx-auto" />}
+                          <tr key={note.id} onClick={() => openEditModal(note)} className={`cursor-pointer transition-colors group ${index % 2 === 0 ? 'bg-[#FFFFFF]' : 'bg-[#F7F9F8]/50'} hover:bg-[#E0FFEE]/30`}>
+                            <td className="px-2 py-1.5 text-center" onClick={(e) => { e.stopPropagation(); toggleComplete(e, note.id); }}>
+                              {note.isCompleted ? <CheckCircle2 className="w-4 h-4 text-[#00CC5B] mx-auto" /> : <Circle className="w-4 h-4 text-[#C4C4C4] group-hover:text-[#00CC5B] mx-auto" />}
                             </td>
-                            <td className={`px-4 py-3 font-bold ${note.isCompleted ? 'text-[#666666] line-through' : ''}`}>
+                            <td className={`px-2 py-1.5 font-bold truncate max-w-[200px] sm:max-w-[300px] ${note.isCompleted ? 'text-[#666666] line-through' : ''}`}>
                               {note.title || '無題'}
                             </td>
-                            <td className="px-4 py-3 text-[#666666] whitespace-nowrap">
-                              {catName}
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
+                            <td className="px-2 py-1.5 whitespace-nowrap">
                               {dueDateInfo ? (
-                                <span className={`px-2 py-1 rounded text-[12px] font-bold ${dueDateInfo.isPast && !note.isCompleted ? 'bg-[#FFE600]/30 text-[#ED1C24]' : 'bg-[#E0FFEE] text-[#00AC4C]'}`}>
+                                <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${dueDateInfo.isPast && !note.isCompleted ? 'bg-[#FFE600]/30 text-[#ED1C24]' : 'bg-[#E0FFEE] text-[#00AC4C]'}`}>
                                   {dueDateInfo.text}
                                 </span>
                               ) : (
                                 <span className="text-[#C4C4C4]">-</span>
                               )}
+                            </td>
+                            <td className="px-2 py-1.5 text-[#666666] whitespace-nowrap text-[12px] font-medium">
+                              {catName}
                             </td>
                           </tr>
                         );
@@ -1014,47 +1053,62 @@ export default function App() {
               <div className="w-full h-full overflow-auto custom-scrollbar" ref={freenoteRef} onDoubleClick={handleFreenoteDoubleClick}>
                 <div style={{ width: 5000 * freenoteZoom, height: 5000 * freenoteZoom, backgroundImage: 'radial-gradient(#D7DCD9 2px, transparent 2px)', backgroundSize: `${30 * freenoteZoom}px ${30 * freenoteZoom}px` }} className="relative pointer-events-none origin-top-left">
                   <div className="pointer-events-auto" style={{ transform: `scale(${freenoteZoom})`, transformOrigin: '0 0', width: 5000, height: 5000 }}>
-                    {notes.filter(n => n.categoryId === 'freenote').map(note => (
-                      <div 
-                        key={note.id}
-                        style={{ position: 'absolute', left: note.x || 40, top: note.y || 40, width: 320 }}
-                        onPointerDown={(e) => handleFreenotePointerDown(e, note)}
-                        onPointerMove={handleFreenotePointerMove}
-                        onPointerUp={handleFreenotePointerUp}
-                        onPointerCancel={handleFreenotePointerUp}
-                        className="bg-[#FFFFFF] rounded-xl border border-[#D7DCD9] shadow-md touch-none cursor-grab active:cursor-grabbing hover:border-[#00CC5B] transition-colors z-0 hover:z-10"
-                      >
-                        <div className="p-3">
-                          <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-bold text-[#333333] text-[14px] truncate pr-2 leading-[1.6]">{note.title || '無題'}</h3>
-                            <button onClick={(e) => { e.stopPropagation(); openEditModal(note); }} className="no-drag p-1 text-[#666666] hover:text-[#00CC5B] bg-[#F7F9F8] rounded-md shrink-0"><Edit2 className="w-4 h-4"/></button>
-                          </div>
-                          <div className="max-h-[400px] overflow-hidden relative no-drag text-[12px]">
-                            {/* 最大20行に変更 */}
-                            {note.blocks?.slice(0, 20).map(block => (
-                              <div key={block.id} className="py-0.5">
-                                {block.type === 'text' && <div className="text-[#666666] leading-[1.6] whitespace-pre-wrap"><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></div>}
-                                {block.type === 'list' && <div className="text-[#666666] flex items-start gap-1 leading-[1.6]"><span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span className="whitespace-pre-wrap"><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span></div>}
-                                {block.type === 'checkbox' && (
-                                  <div className="flex items-start gap-[4px] leading-[1.6]">
-                                    {block.checked ? <CheckCircle2 className="w-3.5 h-3.5 text-[#00CC5B] mt-[2px] flex-shrink-0" /> : <Circle className="w-3.5 h-3.5 text-[#C4C4C4] mt-[2px] flex-shrink-0" />}
-                                    <span className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} whitespace-pre-wrap`}>
-                                      <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} />
-                                    </span>
-                                  </div>
-                                )}
-                                {block.type === 'image' && (
-                                  <div className="my-1.5 rounded-lg overflow-hidden border border-[#D7DCD9] bg-[#F7F9F8] flex items-center justify-center opacity-90 max-h-32">
-                                    <img src={block.content} alt="サムネイル" className="max-w-full max-h-32 object-contain" />
-                                  </div>
-                                )}
+                    {notes.filter(n => n.categoryId === 'freenote').map(note => {
+                      const firstImageBlock = note.blocks?.find(b => b.type === 'image');
+                      const dueDateInfo = formatDueDate(note.dueDate);
+                      return (
+                        <div 
+                          key={note.id}
+                          style={{ position: 'absolute', left: note.x || 40, top: note.y || 40, width: 320 }}
+                          onPointerDown={(e) => handleFreenotePointerDown(e, note)}
+                          onPointerMove={handleFreenotePointerMove}
+                          onPointerUp={handleFreenotePointerUp}
+                          onPointerCancel={handleFreenotePointerUp}
+                          className="bg-[#FFFFFF] rounded-xl border border-[#D7DCD9] shadow-md touch-none cursor-grab active:cursor-grabbing hover:border-[#00CC5B] transition-colors z-0 hover:z-10"
+                        >
+                          <div className="p-3">
+                            {dueDateInfo && !note.isCompleted && (
+                              <div className={`text-[12px] font-bold px-2 py-0.5 rounded flex items-center gap-1 w-fit mb-2 ${dueDateInfo.isPast ? 'bg-[#FFE600]/30 text-[#ED1C24]' : 'bg-[#E0FFEE] text-[#00AC4C]'}`}>
+                                <Clock className="w-3 h-3" /> {dueDateInfo.text}
                               </div>
-                            ))}
-                            <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#FFFFFF] to-transparent pointer-events-none"></div>
+                            )}
+                            {firstImageBlock && (
+                              <div className="mb-2 rounded-lg overflow-hidden max-h-32 bg-[#F7F9F8] border border-[#D7DCD9] flex items-center justify-center opacity-90">
+                                <img src={firstImageBlock.content} alt="サムネイル" className="max-w-full max-h-32 object-contain" />
+                              </div>
+                            )}
+                            <div className="flex justify-between items-start mb-2">
+                              <h3 className="font-bold text-[#333333] text-[16px] pr-2 leading-[1.6] line-clamp-2">{note.title || '無題'}</h3>
+                              <button onClick={(e) => { e.stopPropagation(); openEditModal(note); }} className="no-drag p-1 text-[#666666] hover:text-[#00CC5B] bg-[#F7F9F8] rounded-md shrink-0"><Edit2 className="w-4 h-4"/></button>
+                            </div>
+                            <div className="max-h-[300px] overflow-hidden relative no-drag text-[12px]">
+                              <div className="space-y-0 pb-6">
+                                {note.blocks?.slice(0, 20).map(block => (
+                                  <div key={block.id} className="py-0">
+                                    {block.type === 'text' && <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666]" />}
+                                    {block.type === 'list' && (
+                                      <div className="flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] text-[#666666]">
+                                        <span className="font-bold mt-[2px] shrink-0">•</span><span><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
+                                      </div>
+                                    )}
+                                    {block.type === 'checkbox' && (
+                                      <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
+                                        {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
+                                        <span className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6]`}>
+                                          <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} />
+                                        </span>
+                                      </div>
+                                    )}
+                                    {block.type === 'image' && !firstImageBlock && <div className="text-[12px] text-[#666666] flex items-center gap-[4px] my-1"><ImageIcon className="w-3 h-3"/> 画像</div>}
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#FFFFFF] to-transparent pointer-events-none"></div>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -1135,6 +1189,7 @@ export default function App() {
               ) : (
                 <div className="columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 pb-10">
                   {activeNotes.map((note) => {
+                    const firstImageBlock = note.blocks?.find(b => b.type === 'image');
                     const dueDateInfo = formatDueDate(note.dueDate);
                     return (
                       <div
@@ -1147,54 +1202,54 @@ export default function App() {
                         onDragLeave={handleDragLeaveNote}
                         onDrop={(e) => handleDropOnNote(e, note.id)}
                         onClick={() => openEditModal(note)}
-                        className={`break-inside-avoid mb-3 sm:mb-6 group rounded-xl p-3 transition-all cursor-pointer relative bg-[#FFFFFF] border shadow-sm
+                        className={`break-inside-avoid mb-3 sm:mb-6 group rounded-xl p-3 sm:p-4 transition-all cursor-pointer relative bg-[#FFFFFF] border
                           ${dragOverIndicator?.id === note.id && dragOverIndicator?.position === 'top' ? 'border-t-[4px] border-t-[#00CC5B] border-b-[#D7DCD9] border-x-[#D7DCD9]' : ''}
                           ${dragOverIndicator?.id === note.id && dragOverIndicator?.position === 'bottom' ? 'border-b-[4px] border-b-[#00CC5B] border-t-[#D7DCD9] border-x-[#D7DCD9]' : ''}
                           ${!dragOverIndicator || dragOverIndicator.id !== note.id ? 'border-[#D7DCD9] hover:border-[#00CC5B] hover:shadow-md' : ''}
                           ${note.isCompleted ? 'opacity-60 bg-[#F7F9F8]' : ''}
                         `}
                       >
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex-1 min-w-0 pr-2">
-                            {dueDateInfo && !note.isCompleted && (
-                              <div className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1 w-fit mb-1.5 ${dueDateInfo.isPast ? 'bg-[#FFE600]/30 text-[#ED1C24]' : 'bg-[#E0FFEE] text-[#00AC4C]'}`}>
-                                <Clock className="w-2.5 h-2.5" /> {dueDateInfo.text}
-                              </div>
-                            )}
-                            <h3 className={`font-bold text-[14px] truncate leading-[1.6] ${note.isCompleted ? 'text-[#666666] line-through' : 'text-[#333333]'}`}>
-                              {note.title || '無題'}
-                            </h3>
+                        {dueDateInfo && !note.isCompleted && (
+                          <div className={`text-[12px] font-bold px-2 py-0.5 rounded flex items-center gap-1 w-fit mb-2 ${dueDateInfo.isPast ? 'bg-[#FFE600]/30 text-[#ED1C24]' : 'bg-[#E0FFEE] text-[#00AC4C]'}`}>
+                            <Clock className="w-3 h-3" /> {dueDateInfo.text}
                           </div>
-                          <button onClick={(e) => toggleComplete(e, note.id)} className={`shrink-0 transition-colors p-1 rounded-full shadow-sm border z-10 ${note.isCompleted ? 'text-[#00CC5B] bg-[#E0FFEE] border-[#00CC5B]' : 'text-[#C4C4C4] bg-[#FFFFFF] border-[#D7DCD9]'}`}>
-                            {note.isCompleted ? <CheckCircle2 className="w-4 h-4" /> : <Circle className="w-4 h-4 hover:text-[#00CC5B]" />}
+                        )}
+                        {firstImageBlock && (
+                          <div className="mb-2 sm:mb-3 rounded-lg overflow-hidden max-h-32 bg-[#F7F9F8] border border-[#D7DCD9] flex items-center justify-center opacity-90">
+                            <img src={firstImageBlock.content} alt="サムネイル" className="max-w-full max-h-32 object-contain" />
+                          </div>
+                        )}
+                        <div className="flex items-start justify-between gap-1 sm:gap-2 mb-2">
+                          <h3 className={`font-bold leading-[1.6] line-clamp-2 pr-5 sm:pr-6 text-[16px] ${note.isCompleted ? 'text-[#666666] line-through' : 'text-[#333333]'}`}>
+                            {note.title}
+                          </h3>
+                          <button onClick={(e) => toggleComplete(e, note.id)} className={`absolute top-2 right-2 sm:top-3 sm:right-3 transition-colors p-0.5 sm:p-1 rounded-full shadow-sm border z-10 ${note.isCompleted ? 'text-[#00CC5B] bg-[#E0FFEE] border-[#00CC5B]' : 'text-[#C4C4C4] bg-[#FFFFFF] border-[#D7DCD9]'}`}>
+                            {note.isCompleted ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : <Circle className="w-4 h-4 sm:w-5 sm:h-5 hover:text-[#00CC5B]" />}
                           </button>
                         </div>
-                        
-                        <div className="max-h-[400px] overflow-hidden relative text-[12px]">
-                          {note.blocks?.slice(0, 20).map(block => (
-                            <div key={block.id} className="py-0.5">
-                              {block.type === 'text' && <div className={`leading-[1.6] whitespace-pre-wrap ${note.isCompleted ? 'text-[#666666]' : 'text-[#666666]'}`}><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></div>}
-                              {block.type === 'list' && (
-                                <div className={`flex items-start gap-[4px] leading-[1.6] ${note.isCompleted ? 'text-[#666666]' : 'text-[#666666]'}`}>
-                                  <span className="font-bold mt-[2px] shrink-0">•</span><span><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
-                                </div>
-                              )}
-                              {block.type === 'checkbox' && (
-                                <div className="flex items-start gap-[4px] cursor-pointer group/check leading-[1.6]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
-                                  {block.checked ? <CheckCircle2 className="w-3.5 h-3.5 text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-3.5 h-3.5 text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
-                                  <span className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#666666]'}`}>
-                                    <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} />
-                                  </span>
-                                </div>
-                              )}
-                              {block.type === 'image' && (
-                                <div className="my-1.5 rounded-lg overflow-hidden border border-[#D7DCD9] bg-[#F7F9F8] flex items-center justify-center opacity-90 max-h-32">
-                                  <img src={block.content} alt="サムネイル" className="max-w-full max-h-32 object-contain" />
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                          <div className={`absolute bottom-0 left-0 right-0 h-8 pointer-events-none ${note.isCompleted ? 'bg-gradient-to-t from-[#F7F9F8] to-transparent' : 'bg-gradient-to-t from-[#FFFFFF] to-transparent'}`}></div>
+                        <div className="relative overflow-hidden max-h-[300px] rounded-b-lg">
+                          <div className="space-y-0 pb-6">
+                            {note.blocks?.map(block => (
+                              <div key={block.id} className="py-0">
+                                {block.type === 'text' && <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#666666]'}`} />}
+                                {block.type === 'list' && (
+                                  <div className={`flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#666666]'}`}>
+                                    <span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
+                                  </div>
+                                )}
+                                {block.type === 'checkbox' && (
+                                  <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
+                                    {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
+                                    <span className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6]`}>
+                                      <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} />
+                                    </span>
+                                  </div>
+                                )}
+                                {block.type === 'image' && !firstImageBlock && <div className="text-[12px] text-[#666666] flex items-center gap-[4px] my-1"><ImageIcon className="w-3 h-3"/> 画像</div>}
+                              </div>
+                            ))}
+                          </div>
+                          <div className={`absolute bottom-0 left-0 right-0 h-10 pointer-events-none ${note.isCompleted ? 'bg-gradient-to-t from-[#F7F9F8] to-transparent' : 'bg-gradient-to-t from-[#FFFFFF] to-transparent'}`}></div>
                         </div>
                       </div>
                     );
