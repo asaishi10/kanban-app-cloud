@@ -176,6 +176,9 @@ export default function App() {
   const [activeBlockId, setActiveBlockId] = useState(null);
   const activeBlockInfoRef = useRef({ id: null, cursorPosition: 0 });
 
+  // 追加メニュー用 State
+  const [showToolMenu, setShowToolMenu] = useState(false);
+
   // リンク集用 State
   const [linkFilter, setLinkFilter] = useState('すべて');
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
@@ -332,6 +335,7 @@ export default function App() {
     setFormData({ title: '', categoryId: initialCategory, blocks: [{ id: generateId(), type: 'text', content: '', checked: false }], dueDate: '' });
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
+    setShowToolMenu(false);
     setIsModalOpen(true);
   };
 
@@ -341,6 +345,7 @@ export default function App() {
     setFormData({ ...note, blocks: initialBlocks });
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
+    setShowToolMenu(false);
     setIsModalOpen(true);
   };
 
@@ -1294,46 +1299,54 @@ export default function App() {
         <div className="fixed inset-0 bg-[#333333]/60 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 z-50">
           <div className="bg-[#FFFFFF] sm:rounded-2xl shadow-2xl w-full max-w-2xl h-full sm:h-[95vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
             
-            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex flex-col gap-3 z-10 relative">
-              
-              {/* 上段：タイトルと操作ボタン */}
-              <div className="flex items-center gap-2">
-                <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-0 px-1 py-1 text-[18px] sm:text-[20px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
+            <div className="px-3 sm:px-4 py-2 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex items-center justify-between gap-2 z-20 relative">
+              {/* スクロール可能な左・中央エリア */}
+              <div className="flex-1 flex items-center gap-2 overflow-x-auto custom-scrollbar pb-1 -mb-1">
+                <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-shrink-0 min-w-[100px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
                 
-                <div className="flex items-center gap-1 shrink-0 ml-auto">
-                  {editingNote && <button type="button" onClick={() => requestDeleteNote(editingNote.id)} className="text-[#666666] hover:text-[#ED1C24] hover:bg-[#FFFFFF] p-1.5 rounded-lg transition-colors"><Trash2 className="w-5 h-5" /></button>}
-                  <button type="button" onClick={() => setIsModalOpen(false)} className="text-[#666666] hover:bg-[#FFFFFF] p-1.5 rounded-lg transition-colors"><X className="w-5 h-5" /></button>
-                  <button type="button" onClick={saveNote} className="ml-1 px-3 py-1.5 sm:px-4 sm:py-2 bg-[#00CC5B] hover:bg-[#00AC4C] text-[#FFFFFF] rounded-lg font-bold transition-colors flex items-center gap-[4px] text-[12px] sm:text-[14px]">保存</button>
+                <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0 hover:border-[#C4C4C4] h-8">
+                  <Calendar className="w-3.5 h-3.5 text-[#666666] mr-1 hidden sm:block" />
+                  <div className="relative flex items-center h-full">
+                    <span className="text-[12px] sm:text-[13px] text-[#333333] font-bold whitespace-nowrap text-center min-w-[65px]">
+                      {dueDateParts.date ? `${dueDateParts.date.split('-')[0].slice(-2)}/${dueDateParts.date.split('-')[1]}/${dueDateParts.date.split('-')[2]}` : '日付設定'}
+                    </span>
+                    <input type="date" value={dueDateParts.date} onChange={(e) => handleDateChange('date', e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                  </div>
+                  <div className="w-px h-3 bg-[#D7DCD9] mx-1"></div>
+                  <select value={dueDateParts.hour} onChange={(e) => handleDateChange('hour', e.target.value)} className="bg-transparent text-[12px] sm:text-[13px] text-[#333333] outline-none font-bold appearance-none cursor-pointer h-full">
+                    {[...Array(24)].map((_, i) => { const h = String(i).padStart(2, '0'); return <option key={h} value={h}>{h}</option>; })}
+                  </select>
+                  <span className="text-[#666666] text-[12px] font-medium ml-0.5">時</span>
                 </div>
+
+                <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-24 sm:w-28 px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[12px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8">
+                  <option value="freenote">フリーノート</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
               </div>
 
-              {/* 下段：期限、カテゴリー、ブロック追加 */}
-              <div className="flex items-center justify-between pt-1 overflow-x-auto custom-scrollbar pb-1">
-                <div className="flex items-center gap-[4px] sm:gap-[8px]">
-                  
-                  {/* メタデータ設定 */}
-                  <div className="flex items-center gap-1 bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0">
-                    <Calendar className="w-3.5 h-3.5 text-[#666666] hidden sm:block" />
-                    <input type="date" value={dueDateParts.date} onChange={(e) => handleDateChange('date', e.target.value)} className="bg-transparent text-[12px] sm:text-[14px] text-[#333333] outline-none font-medium w-[110px] sm:w-[120px]" />
-                    <select value={dueDateParts.hour} onChange={(e) => handleDateChange('hour', e.target.value)} className="bg-transparent text-[12px] sm:text-[14px] text-[#333333] outline-none font-medium appearance-none pl-1">
-                      {[...Array(24)].map((_, i) => { const h = String(i).padStart(2, '0'); return <option key={h} value={h}>{h}</option>; })}
-                    </select>
-                    <span className="text-[#666666] text-[12px] sm:text-[14px] font-medium pr-1">時</span>
-                  </div>
-
-                  <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="w-24 sm:w-28 px-2 py-1 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[12px] sm:text-[14px] text-[#333333] shrink-0 font-medium">
-                    <option value="freenote">フリーノート</option>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                  
-                  <div className="w-px h-5 bg-[#D7DCD9] mx-1 shrink-0"></div>
-
-                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addBlock('text')} title="テキストを追加" className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all shrink-0"><AlignLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addBlock('list')} title="リストを追加" className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all shrink-0"><List className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => addBlock('checkbox')} title="チェックボックスを追加" className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all shrink-0"><CheckSquare className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-                  <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => fileInputRef.current?.click()} title="画像を追加" className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-all shrink-0"><ImageIcon className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-                  <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
+              {/* 固定の右側エリア */}
+              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 pl-1 sm:pl-2 ml-auto">
+                {/* 追加ツール */}
+                <div className="relative">
+                  <button type="button" onClick={() => setShowToolMenu(!showToolMenu)} className={`flex items-center justify-center gap-1 px-2 h-8 border rounded-lg transition-colors text-[12px] font-bold ${showToolMenu ? 'bg-[#E0FFEE] text-[#00CC5B] border-[#00CC5B]' : 'bg-[#FFFFFF] text-[#666666] border-[#D7DCD9] hover:border-[#C4C4C4]'}`}>
+                    <Plus className="w-4 h-4" /> <span className="hidden lg:inline">追加</span>
+                  </button>
+                  {showToolMenu && (
+                    <div className="absolute right-0 top-full mt-2 bg-[#FFFFFF] border border-[#D7DCD9] shadow-xl rounded-xl p-1 flex gap-1 z-50 animate-in fade-in zoom-in duration-200">
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { addBlock('text'); setShowToolMenu(false); }} title="テキストを追加" className="p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><AlignLeft className="w-4 h-4" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { addBlock('list'); setShowToolMenu(false); }} title="リストを追加" className="p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><List className="w-4 h-4" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { addBlock('checkbox'); setShowToolMenu(false); }} title="チェックボックスを追加" className="p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><CheckSquare className="w-4 h-4" /></button>
+                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { fileInputRef.current?.click(); setShowToolMenu(false); }} title="画像を追加" className="p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><ImageIcon className="w-4 h-4" /></button>
+                    </div>
+                  )}
                 </div>
+
+                <div className="w-px h-5 bg-[#D7DCD9] mx-0.5 hidden sm:block"></div>
+
+                {editingNote && <button type="button" onClick={() => requestDeleteNote(editingNote.id)} className="text-[#666666] hover:text-[#ED1C24] hover:bg-[#FFFFFF] p-1.5 rounded-lg transition-colors"><Trash2 className="w-4 h-4 sm:w-5 sm:h-5" /></button>}
+                <button type="button" onClick={() => setIsModalOpen(false)} className="text-[#666666] hover:bg-[#FFFFFF] p-1.5 rounded-lg transition-colors"><X className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+                <button type="button" onClick={saveNote} className="ml-0.5 px-3 h-8 bg-[#00CC5B] hover:bg-[#00AC4C] text-[#FFFFFF] rounded-lg font-bold transition-colors flex items-center justify-center text-[12px] sm:text-[13px]">保存</button>
               </div>
             </div>
 
