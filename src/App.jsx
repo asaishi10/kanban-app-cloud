@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle, LogOut, Calendar, Clock, PenTool, Menu, GripVertical, ZoomIn, ZoomOut, Target, BookOpen, ExternalLink } from 'lucide-react';
+import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle, LogOut, Calendar, Clock, PenTool, Menu, GripVertical, ZoomIn, ZoomOut, Target, BookOpen, ExternalLink, Bold, Underline, Palette } from 'lucide-react';
 
 // --- Firebase のインポート ---
 import { initializeApp } from 'firebase/app';
@@ -56,72 +56,172 @@ const compressImage = (dataUrl) => {
   });
 };
 
-// ★ URL自動リンク ＆ 辞書リンク解析コンポーネント
-const LinkifiedText = ({ text, className, links = [], activeCategoryId }) => {
-  const parseLinks = (str) => {
-    const validLinks = links.filter(l => !l.groupName || l.groupName === 'すべて' || l.groupName === activeCategoryId);
-    validLinks.sort((a, b) => b.word.length - a.word.length);
+// ★ 太字・下線・文字色・自動リンクを一括パースしてReact要素にするコンポーネント
+const FormattedText = ({ text, className, links = [], activeCategoryId }) => {
+  if (!text) return null;
 
+  // 1. 各スタイル（太字、下線）をインラインで適用するヘルパー
+  const applyStyles = (txt) => {
+    const boldRegex = /\*\*([^*]+)\*\*/g;
+    const underlineRegex = /__([^_]+)__/g;
+
+    let textParts = [{ type: 'text', content: txt }];
+
+    // 太字パース
+    textParts = textParts.flatMap(p => {
+      if (p.type !== 'text') return p;
+      const parts = [];
+      let lastIndex = 0;
+      let match;
+      boldRegex.lastIndex = 0;
+      while ((match = boldRegex.exec(p.content)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push({ type: 'text', content: p.content.substring(lastIndex, match.index) });
+        }
+        parts.push({ type: 'bold', content: match[1] });
+        lastIndex = boldRegex.lastIndex;
+      }
+      if (lastIndex < p.content.length) {
+        parts.push({ type: 'text', content: p.content.substring(lastIndex) });
+      }
+      return parts;
+    });
+
+    // 下線パース
+    textParts = textParts.flatMap(p => {
+      if (p.type !== 'text') return p;
+      const parts = [];
+      let lastIndex = 0;
+      let match;
+      underlineRegex.lastIndex = 0;
+      while ((match = underlineRegex.exec(p.content)) !== null) {
+        if (match.index > lastIndex) {
+          parts.push({ type: 'text', content: p.content.substring(lastIndex, match.index) });
+        }
+        parts.push({ type: 'underline', content: match[1] });
+        lastIndex = underlineRegex.lastIndex;
+      }
+      if (lastIndex < p.content.length) {
+        parts.push({ type: 'text', content: p.content.substring(lastIndex) });
+      }
+      return parts;
+    });
+
+    return textParts.map((p, i) => {
+      if (p.type === 'bold') return <strong key={i} className="font-bold">{p.content}</strong>;
+      if (p.type === 'underline') return <u key={i} className="underline decoration-1">{p.content}</u>;
+      return p.content;
+    });
+  };
+
+  // 2. セグメントに分割して各種タグを解析
+  let segments = [{ type: 'text', content: text }];
+
+  // A. カラータグの抽出: [color:red](text)
+  const colorRegex = /\[color:([^\]]+)\]\(([^)]+)\)/g;
+  segments = segments.flatMap(seg => {
+    if (seg.type !== 'text') return seg;
     const parts = [];
     let lastIndex = 0;
     let match;
-    const mdRegex = /\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g;
-    
-    while ((match = mdRegex.exec(str)) !== null) {
-      if (match.index > lastIndex) parts.push({ type: 'text', content: str.substring(lastIndex, match.index) });
-      parts.push({ type: 'link', text: match[1], url: match[2] });
-      lastIndex = mdRegex.lastIndex;
-    }
-    if (lastIndex < str.length) parts.push({ type: 'text', content: str.substring(lastIndex) });
-    
-    let finalParts = [];
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    parts.forEach(p => {
-      if (p.type === 'link') {
-        finalParts.push(p);
-      } else {
-        const subParts = p.content.split(urlRegex);
-        subParts.forEach(sp => {
-          if (urlRegex.test(sp)) finalParts.push({ type: 'link', text: sp, url: sp });
-          else if (sp) finalParts.push({ type: 'text', content: sp });
-        });
+    while ((match = colorRegex.exec(seg.content)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push({ type: 'text', content: seg.content.substring(lastIndex, match.index) });
       }
-    });
+      parts.push({ type: 'color', color: match[1], content: match[2] });
+      lastIndex = colorRegex.lastIndex;
+    }
+    if (lastIndex < seg.content.length) {
+      parts.push({ type: 'text', content: seg.content.substring(lastIndex) });
+    }
+    return parts;
+  });
 
-    if (validLinks.length > 0) {
-      let wordParsedParts = [];
-      finalParts.forEach(p => {
-        if (p.type === 'link') {
-          wordParsedParts.push(p);
+  // B. マークダウンリンクの抽出: [label](url)
+  const mdLinkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/g;
+  segments = segments.flatMap(seg => {
+    if (seg.type !== 'text') return seg;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = mdLinkRegex.exec(seg.content)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push({ type: 'text', content: seg.content.substring(lastIndex, match.index) });
+      }
+      parts.push({ type: 'link', text: match[1], url: match[2] });
+      lastIndex = mdLinkRegex.lastIndex;
+    }
+    if (lastIndex < seg.content.length) {
+      parts.push({ type: 'text', content: seg.content.substring(lastIndex) });
+    }
+    return parts;
+  });
+
+  // C. 一般URLの自動リンク化
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  segments = segments.flatMap(seg => {
+    if (seg.type !== 'text') return seg;
+    const parts = [];
+    const subParts = seg.content.split(urlRegex);
+    subParts.forEach(sp => {
+      if (urlRegex.test(sp)) parts.push({ type: 'link', text: sp, url: sp });
+      else if (sp) parts.push({ type: 'text', content: sp });
+    });
+    return parts;
+  });
+
+  // D. 辞書単語リンクの抽出
+  const validLinks = links.filter(l => !l.groupName || l.groupName === 'すべて' || l.groupName === activeCategoryId);
+  validLinks.sort((a, b) => b.word.length - a.word.length);
+  if (validLinks.length > 0) {
+    segments = segments.flatMap(seg => {
+      if (seg.type !== 'text') return seg;
+      const escapedWords = validLinks.map(l => l.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const wordRegex = new RegExp(`(${escapedWords.join('|')})`, 'g');
+      const parts = [];
+      const subParts = seg.content.split(wordRegex);
+      subParts.forEach(sp => {
+        if (!sp) return;
+        const matchedLink = validLinks.find(l => l.word === sp);
+        if (matchedLink) {
+          parts.push({ type: 'dict_link', text: sp, url: matchedLink.url });
         } else {
-          const escapedWords = validLinks.map(l => l.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-          const wordRegex = new RegExp(`(${escapedWords.join('|')})`, 'g');
-          const subParts = p.content.split(wordRegex);
-          subParts.forEach(sp => {
-            if (!sp) return;
-            const matchedLink = validLinks.find(l => l.word === sp);
-            if (matchedLink) {
-              wordParsedParts.push({ type: 'dict_link', text: sp, url: matchedLink.url });
-            } else {
-              wordParsedParts.push({ type: 'text', content: sp });
-            }
-          });
+          parts.push({ type: 'text', content: sp });
         }
       });
-      finalParts = wordParsedParts;
-    }
-
-    return finalParts.map((p, i) => {
-      if (p.type === 'link') {
-        return <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="text-[#00CC5B] hover:text-[#00AC4C] hover:underline font-bold break-words" onClick={(e) => e.stopPropagation()}>{p.text}</a>;
-      } else if (p.type === 'dict_link') {
-        return <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="text-[#00CC5B] hover:text-[#00AC4C] hover:underline font-bold border-b-[2px] border-dotted border-[#00CC5B] break-words" onClick={(e) => e.stopPropagation()}>{p.text}</a>;
-      } else {
-        return <span key={i}>{p.content}</span>;
-      }
+      return parts;
     });
-  };
-  return <div className={className}>{parseLinks(text)}</div>;
+  }
+
+  // 3. 各要素をReactコンポーネントとしてレンダリング
+  return (
+    <div className={className}>
+      {segments.map((seg, i) => {
+        if (seg.type === 'link') {
+          return (
+            <a key={i} href={seg.url} target="_blank" rel="noopener noreferrer" className="text-[#00CC5B] hover:text-[#00AC4C] hover:underline font-bold break-words" onClick={(e) => e.stopPropagation()}>
+              {applyStyles(seg.text)}
+            </a>
+          );
+        }
+        if (seg.type === 'dict_link') {
+          return (
+            <a key={i} href={seg.url} target="_blank" rel="noopener noreferrer" className="text-[#00CC5B] hover:text-[#00AC4C] hover:underline font-bold border-b-[2px] border-dotted border-[#00CC5B] break-words" onClick={(e) => e.stopPropagation()}>
+              {applyStyles(seg.text)}
+            </a>
+          );
+        }
+        if (seg.type === 'color') {
+          return (
+            <span key={i} style={{ color: seg.color }}>
+              {applyStyles(seg.content)}
+            </span>
+          );
+        }
+        return <span key={i}>{applyStyles(seg.content)}</span>;
+      })}
+    </div>
+  );
 };
 
 const formatDueDate = (dateString) => {
@@ -178,6 +278,8 @@ export default function App() {
 
   // 追加メニュー用 State
   const [showToolMenu, setShowToolMenu] = useState(false);
+  // カラーパレットメニュー
+  const [showColorMenu, setShowColorMenu] = useState(false);
 
   // リンク集用 State
   const [linkFilter, setLinkFilter] = useState('すべて');
@@ -646,6 +748,40 @@ export default function App() {
 
   const updateBlock = (blockId, updates) => setFormData(prev => ({ ...prev, blocks: prev.blocks.map(b => b.id === blockId ? { ...b, ...updates } : b) }));
   const removeBlock = (blockId) => setFormData(prev => ({ ...prev, blocks: prev.blocks.filter(b => b.id !== blockId) }));
+
+  // ★ インラインテキスト装飾の適用ヘルパー
+  const applyTextStyle = (styleType, colorValue = null) => {
+    const { id: targetId } = activeBlockInfoRef.current;
+    if (!targetId) return;
+
+    const textarea = document.getElementById(`block-input-${targetId}`);
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selectedText = text.substring(start, end);
+
+    let replacement = '';
+    if (styleType === 'bold') {
+      replacement = `**${selectedText || '太字'}**`;
+    } else if (styleType === 'underline') {
+      replacement = `__${selectedText || '下線'}__`;
+    } else if (styleType === 'color') {
+      replacement = `[color:${colorValue}](${selectedText || '色付き文字'})`;
+    }
+
+    const newValue = text.substring(0, start) + replacement + text.substring(end);
+    updateBlock(targetId, { content: newValue });
+
+    // カーソル位置を再調整してフォーカスをあてる
+    setTimeout(() => {
+      textarea.focus();
+      const newCursorPos = start + replacement.length;
+      textarea.setSelectionRange(newCursorPos, newCursorPos);
+      activeBlockInfoRef.current = { id: targetId, cursorPosition: newCursorPos };
+    }, 50);
+  };
 
   const handleKeyDown = (e, index, blockType) => {
     if (e.nativeEvent.isComposing) return;
@@ -1124,17 +1260,17 @@ export default function App() {
                               <div className="space-y-0 pb-6">
                                 {note.blocks?.slice(0, 20).map(block => (
                                   <div key={block.id} className="py-0">
-                                    {block.type === 'text' && <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666]" />}
+                                    {block.type === 'text' && <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666]" />}
                                     {block.type === 'list' && (
                                       <div className="flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] text-[#666666]">
-                                        <span className="font-bold mt-[2px] shrink-0">•</span><span><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
+                                        <span className="font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
                                       </div>
                                     )}
                                     {block.type === 'checkbox' && (
                                       <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
                                         {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
                                         <span className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6]`}>
-                                          <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} />
+                                          <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} />
                                         </span>
                                       </div>
                                     )}
@@ -1270,17 +1406,17 @@ export default function App() {
                           <div className="space-y-0 pb-6">
                             {note.blocks?.map(block => (
                               <div key={block.id} className="py-0">
-                                {block.type === 'text' && <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#666666]'}`} />}
+                                {block.type === 'text' && <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#666666]'}`} />}
                                 {block.type === 'list' && (
                                   <div className={`flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#666666]'}`}>
-                                    <span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span><LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
+                                    <span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
                                   </div>
                                 )}
                                 {block.type === 'checkbox' && (
                                   <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
                                     {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
                                     <span className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6]`}>
-                                      <LinkifiedText text={block.content} links={links} activeCategoryId={note.categoryId} />
+                                      <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} />
                                     </span>
                                   </div>
                                 )}
@@ -1333,6 +1469,33 @@ export default function App() {
 
               {/* 固定の右側エリア */}
               <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0 pl-1 sm:pl-2 ml-auto">
+                {/* ★ インライン装飾ツールバー（行選択時のみ機能） */}
+                {activeBlockId && (
+                  <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg p-0.5 h-8 gap-0.5 sm:gap-1 shrink-0">
+                    <button type="button" onClick={() => applyTextStyle('bold')} className="p-1 text-[#666666] hover:text-[#00CC5B] hover:bg-[#F7F9F8] rounded transition-colors" title="太字にする (B)"><Bold className="w-3.5 h-3.5 sm:w-4 sm:h-4"/></button>
+                    <button type="button" onClick={() => applyTextStyle('underline')} className="p-1 text-[#666666] hover:text-[#00CC5B] hover:bg-[#F7F9F8] rounded transition-colors" title="下線を引く (U)"><Underline className="w-3.5 h-3.5 sm:w-4 sm:h-4"/></button>
+                    
+                    {/* カラーパレット */}
+                    <div className="relative">
+                      <button type="button" onClick={() => setShowColorMenu(!showColorMenu)} className={`p-1 rounded transition-colors ${showColorMenu ? 'text-[#00CC5B] bg-[#E0FFEE]' : 'text-[#666666] hover:text-[#00CC5B] hover:bg-[#F7F9F8]'}`} title="文字の色を変える"><Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button>
+                      {showColorMenu && (
+                        <div className="absolute right-0 top-full mt-1 bg-[#FFFFFF] border border-[#D7DCD9] shadow-xl rounded-xl p-1.5 flex gap-1.5 z-50 animate-in fade-in zoom-in duration-200">
+                          {['#ED1C24', '#005BFF', '#00CC5B', '#FF8C00', '#333333'].map(color => (
+                            <button 
+                              key={color} 
+                              type="button" 
+                              onClick={() => { applyTextStyle('color', color); setShowColorMenu(false); }} 
+                              className="w-4 h-4 rounded-full border border-gray-200 hover:scale-125 transition-transform" 
+                              style={{ backgroundColor: color }} 
+                              title={color}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* 追加ツール */}
                 <div className="relative">
                   <button type="button" onClick={() => setShowToolMenu(!showToolMenu)} className={`flex items-center justify-center gap-1 px-2 h-8 border rounded-lg transition-colors text-[12px] font-bold ${showToolMenu ? 'bg-[#E0FFEE] text-[#00CC5B] border-[#00CC5B]' : 'bg-[#FFFFFF] text-[#666666] border-[#D7DCD9] hover:border-[#C4C4C4]'}`}>
@@ -1384,20 +1547,64 @@ export default function App() {
                             </button>
                           </div>
                         ) : (
-                          <textarea
-                            id={`block-input-${block.id}`}
-                            value={block.content}
-                            onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); saveCursorPosition(e, block.id); }}
-                            onKeyDown={(e) => { handleKeyDown(e, index, block.type); saveCursorPosition(e, block.id); }}
-                            onKeyUp={(e) => saveCursorPosition(e, block.id)}
-                            onClick={(e) => saveCursorPosition(e, block.id)}
-                            onFocus={(e) => saveCursorPosition(e, block.id)}
-                            onPaste={handlePaste}
-                            className={`w-full bg-transparent resize-none outline-none py-0.5 m-0 font-medium leading-[1.6] overflow-hidden min-h-[28px]
-                              ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'} text-[13px] sm:text-[14px]`}
-                            rows={1}
-                            placeholder={block.type === 'text' ? (index === 0 ? "ここからメモを入力..." : "") : "項目を入力..."}
-                          />
+                          /* ★ 改修: フォーカス状態に応じて textarea と FormattedText プレビューを切り替え */
+                          activeBlockId === block.id ? (
+                            <textarea
+                              id={`block-input-${block.id}`}
+                              value={block.content}
+                              onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); saveCursorPosition(e, block.id); }}
+                              onKeyDown={(e) => { handleKeyDown(e, index, block.type); saveCursorPosition(e, block.id); }}
+                              onKeyUp={(e) => saveCursorPosition(e, block.id)}
+                              onClick={(e) => saveCursorPosition(e, block.id)}
+                              onFocus={(e) => saveCursorPosition(e, block.id)}
+                              onBlur={(e) => {
+                                // 少しディレイを入れてカラーパレットやリンクボタンを誤ってキャンセルするのを防ぐ
+                                setTimeout(() => {
+                                  // アクティブブロックのリセット（もし別のテキストエリアがフォーカスされない場合）
+                                  if (document.activeElement.id !== `block-input-${block.id}`) {
+                                    // カラーパレットをクリックした場合などはリセットを避ける
+                                    if (!document.activeElement.closest('.Palette')) {
+                                      setActiveBlockId(null);
+                                    }
+                                  }
+                                }, 150);
+                              }}
+                              onPaste={handlePaste}
+                              className={`w-full bg-transparent resize-none outline-none py-0.5 m-0 font-medium leading-[1.6] overflow-hidden min-h-[28px]
+                                ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'} text-[13px] sm:text-[14px]`}
+                              rows={1}
+                              placeholder={block.type === 'text' ? (index === 0 ? "ここからメモを入力..." : "") : "項目を入力..."}
+                              autoFocus
+                            />
+                          ) : (
+                            <div 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveBlockId(block.id);
+                                setTimeout(() => {
+                                  const el = document.getElementById(`block-input-${block.id}`);
+                                  if (el) {
+                                    el.focus();
+                                    handleTextareaResize({ target: el });
+                                  }
+                                }, 50);
+                              }}
+                              className={`w-full min-h-[28px] py-0.5 cursor-text select-text`}
+                            >
+                              {block.content ? (
+                                <FormattedText 
+                                  text={block.content} 
+                                  links={links} 
+                                  activeCategoryId={formData.categoryId} 
+                                  className={`whitespace-pre-wrap font-medium leading-[1.6] text-[13px] sm:text-[14px] ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'}`}
+                                />
+                              ) : (
+                                <span className="text-[#C4C4C4] select-none text-[13px] sm:text-[14px] italic">
+                                  {block.type === 'text' ? (index === 0 ? "ここからメモを入力..." : "テキストを入力...") : "項目を入力..."}
+                                </span>
+                              )}
+                            </div>
+                          )
                         )}
                       </div>
                       
