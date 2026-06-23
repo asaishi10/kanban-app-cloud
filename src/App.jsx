@@ -56,9 +56,11 @@ const compressImage = (dataUrl) => {
   });
 };
 
-// ★ HTML内のテキストノードを検索し、URLと辞書ワードを安全に自動リンク化する関数
+// ★ HTML内のテキストノードを検索し、URLと辞書ワードを安全に自動リンク化する関数（超安全ガード付き）
 const applyDictionaryLinks = (htmlString, links, categoryId) => {
-  if (!htmlString) return '';
+  // オブジェクトが渡された場合のクラッシュを100%防止
+  if (!htmlString || typeof htmlString !== 'string') return '';
+  
   const validLinks = (links || []).filter(l => l && typeof l.word === 'string' && l.word.trim() !== '' && (!l.groupName || l.groupName === 'すべて' || l.groupName === categoryId));
   validLinks.sort((a, b) => (b.word?.length || 0) - (a.word?.length || 0));
   
@@ -310,7 +312,7 @@ export default function App() {
 
   const handleTabClick = (categoryId) => {
     setActiveCategoryId(categoryId);
-    setIsSidebarOpen(false); // タブクリック時にサイドバーを閉じる
+    setIsSidebarOpen(false);
   };
 
   const handleAddCategory = async () => {
@@ -354,11 +356,11 @@ export default function App() {
     if (Array.isArray(note.blocks)) {
       initialBlocks = note.blocks.map(b => {
         if (typeof b === 'string') return { id: generateId(), type: 'text', content: b, checked: false };
-        if (b && typeof b === 'object') return { id: b.id || generateId(), type: b.type || 'text', content: b.content || '', checked: !!b.checked };
+        if (b && typeof b === 'object') return { id: b.id || generateId(), type: b.type || 'text', content: typeof b.content === 'string' ? b.content : '', checked: !!b.checked };
         return null;
       }).filter(Boolean);
     }
-    if (initialBlocks.length === 0) initialBlocks = [{ id: generateId(), type: 'text', content: note.content || '', checked: false }];
+    if (initialBlocks.length === 0) initialBlocks = [{ id: generateId(), type: 'text', content: typeof note.content === 'string' ? note.content : '', checked: false }];
 
     setFormData({ 
       ...note, 
@@ -605,7 +607,7 @@ export default function App() {
   };
 
   // 削除確認処理
-  const requestDeleteCategory = (id, name) => setConfirmDialog({ isOpen: true, message: `ボード「${name}」を削除しますか？`, targetId: id, actionType: 'category' });
+  const requestDeleteCategory = (id, name) => setConfirmDialog({ isOpen: true, message: `ボード「${typeof name === 'string' ? name : '無題'}」を削除しますか？`, targetId: id, actionType: 'category' });
   const requestDeleteNote = (id) => setConfirmDialog({ isOpen: true, message: 'このメモを削除しますか？', targetId: id, actionType: 'note' });
   const requestDeleteLink = (id) => setConfirmDialog({ isOpen: true, message: 'このリンクを削除しますか？', targetId: id, actionType: 'link' });
 
@@ -638,17 +640,6 @@ export default function App() {
 
   const removeBlock = (blockId) => setFormData(prev => ({ ...prev, blocks: prev.blocks.filter(b => b && b.id !== blockId) }));
 
-  // ネイティブコマンドによる超直感的なインライン装飾
-  const applyTextStyle = (styleType, colorValue = null) => {
-    if (styleType === 'bold') {
-      document.execCommand('bold', false, null);
-    } else if (styleType === 'underline') {
-      document.execCommand('underline', false, null);
-    } else if (styleType === 'color') {
-      document.execCommand('foreColor', false, colorValue);
-    }
-  };
-
   // エンターキーでの新しい行（ブロック）の追加
   const handleKeyDown = (e, index, blockType, blockId) => {
     if (e.nativeEvent.isComposing) return;
@@ -666,7 +657,6 @@ export default function App() {
                 const prevInput = document.getElementById(`block-input-${prevBlock.id}`);
                 if (prevInput) {
                   prevInput.focus();
-                  // カーソルを末尾へ
                   const selection = window.getSelection();
                   const range = document.createRange();
                   range.selectNodeContents(prevInput);
@@ -734,7 +724,6 @@ export default function App() {
       reader.readAsDataURL(file);
       return;
     }
-    // 画像以外は contentEditable のネイティブのペースト挙動に任せる
   };
 
   // すべてのメモのソートハンドラ
@@ -757,7 +746,7 @@ export default function App() {
     );
   }
 
-  // ★ 復活したログイン画面
+  // ★ ログイン画面
   if (!user && !loading) {
     return (
       <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333] p-6">
@@ -898,13 +887,13 @@ export default function App() {
                 {isCategoryEditMode && <GripVertical className="w-4 h-4 text-[#C4C4C4] cursor-grab active:cursor-grabbing shrink-0" />}
 
                 {editingCategoryId === category.id ? (
-                  <input type="text" value={editingCategoryName} onChange={(e) => setEditingCategoryName(e.target.value)} onBlur={() => saveCategoryName(category.id)} onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)} autoFocus className="border border-[#00CC5B] rounded px-2 py-0.5 text-[14px] outline-none bg-[#FFFFFF] w-full" />
+                  <input type="text" value={typeof editingCategoryName === 'string' ? editingCategoryName : ''} onChange={(e) => setEditingCategoryName(e.target.value)} onBlur={() => saveCategoryName(category.id)} onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)} autoFocus className="border border-[#00CC5B] rounded px-2 py-0.5 text-[14px] outline-none bg-[#FFFFFF] w-full" />
                 ) : (
                   <>
-                    <span className="font-bold text-[14px] select-none flex-1 truncate">{category.name || '無題のボード'}</span>
+                    <span className="font-bold text-[14px] select-none flex-1 truncate">{typeof category.name === 'string' ? category.name : '無題のボード'}</span>
                     {isCategoryEditMode && (
                       <div className="flex items-center ml-1 shrink-0 gap-1">
-                        <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#00CC5B] hover:bg-[#E0FFEE] transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(typeof category.name === 'string' ? category.name : ''); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#00CC5B] hover:bg-[#E0FFEE] transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
                         <button onClick={(e) => { e.stopPropagation(); requestDeleteCategory(category.id, category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#ED1C24] transition-colors rounded"><X className="w-3.5 h-3.5" /></button>
                       </div>
                     )}
@@ -930,8 +919,9 @@ export default function App() {
             <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 mr-2 text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333] rounded-lg transition-colors">
               <Menu className="w-6 h-6" />
             </button>
+            {/* ★ ここでオブジェクトが入り込むのをガード（白くなる原因だった場所） */}
             <h2 className="text-[18px] sm:text-[20px] font-bold text-[#333333]">
-              {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : safeCategories.find(c => c && c.id === activeCategoryId)?.name || 'ボード'}
+              {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : String(safeCategories.find(c => c && c.id === activeCategoryId)?.name || 'ボード')}
             </h2>
           </div>
           
@@ -977,7 +967,7 @@ export default function App() {
                         // HTMLタグを削除してプレーンテキストにする安全な処理
                         const plainText = Array.isArray(note.blocks)
                           ? note.blocks.filter(b => b && (b.type === 'text' || b.type === 'list' || b.type === 'checkbox'))
-                              .map(b => (b.content || '').replace(/<[^>]*>?/gm, ''))
+                              .map(b => (typeof b.content === 'string' ? b.content : '').replace(/<[^>]*>?/gm, ''))
                               .join(' ').replace(/\s+/g, ' ').trim()
                           : '';
                         
@@ -996,7 +986,7 @@ export default function App() {
                               )}
                             </td>
                             <td className="px-2 py-1.5 text-[#666666] text-[12px] font-medium truncate max-w-[80px] sm:max-w-[120px]">
-                              {catName}
+                              {typeof catName === 'string' ? catName : 'ボード'}
                             </td>
                             <td className={`px-2 py-1.5 font-bold truncate max-w-[100px] sm:max-w-[180px] ${note.isCompleted ? 'text-[#666666] line-through' : ''}`}>
                               {typeof note.title === 'string' ? note.title : String(note.title || '無題')}
@@ -1039,7 +1029,7 @@ export default function App() {
                                 <Clock className="w-3 h-3" /> {dueDateInfo.text}
                               </div>
                             )}
-                            {firstImageBlock && (
+                            {firstImageBlock && typeof firstImageBlock.content === 'string' && (
                               <div className="mb-2 rounded-lg overflow-hidden max-h-32 bg-[#F7F9F8] border border-[#D7DCD9] flex items-center justify-center opacity-90">
                                 <img src={firstImageBlock.content} alt="サムネイル" className="max-w-full max-h-32 object-contain" />
                               </div>
@@ -1054,16 +1044,16 @@ export default function App() {
                                   if (!block) return null;
                                   return (
                                     <div key={block.id || generateId()} className="py-0">
-                                      {block.type === 'text' && <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(block.content, safeLinks, note.categoryId) }} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666] break-words" />}
+                                      {block.type === 'text' && <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666] break-words" />}
                                       {block.type === 'list' && (
-                                        <div className="flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] text-[#666666]">
-                                          <span className="font-bold mt-[2px] shrink-0">•</span><div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(block.content, safeLinks, note.categoryId) }} className="break-words" />
+                                        <div className="flex items-start gap-[6px] font-medium leading-[1.6] text-[14px] text-[#666666]">
+                                          <span className="font-bold mt-[1px] text-[18px] leading-none shrink-0">•</span><div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="break-words flex-1" />
                                         </div>
                                       )}
                                       {block.type === 'checkbox' && (
-                                        <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
-                                          {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
-                                          <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(block.content, safeLinks, note.categoryId) }} className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6] break-words`} />
+                                        <div className="flex items-start gap-[6px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
+                                          {block.checked ? <CheckCircle2 className="w-[18px] h-[18px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[18px] h-[18px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
+                                          <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6] break-words flex-1`} />
                                         </div>
                                       )}
                                       {block.type === 'image' && !firstImageBlock && <div className="text-[12px] text-[#666666] flex items-center gap-[4px] my-1"><ImageIcon className="w-3 h-3"/> 画像</div>}
@@ -1168,7 +1158,7 @@ export default function App() {
                         key={note.id}
                         draggable={activeCategoryId !== 'deadline'}
                         onDragStart={(e) => handleDragStart(e, note.id)}
-                        onDragEnd={handleDragEnd(e, note.id)}
+                        onDragEnd={handleDragEnd}
                         onDragOver={(e) => handleDragOverNote(e, note.id)}
                         onDragLeave={handleDragLeaveNote}
                         onDrop={(e) => handleDropOnNote(e, note.id)}
@@ -1185,7 +1175,7 @@ export default function App() {
                             <Clock className="w-3 h-3" /> {dueDateInfo.text}
                           </div>
                         )}
-                        {firstImageBlock && (
+                        {firstImageBlock && typeof firstImageBlock.content === 'string' && (
                           <div className="mb-2 sm:mb-3 rounded-lg overflow-hidden max-h-32 bg-[#F7F9F8] border border-[#D7DCD9] flex items-center justify-center opacity-90">
                             <img src={firstImageBlock.content} alt="サムネイル" className="max-w-full max-h-32 object-contain" />
                           </div>
@@ -1204,16 +1194,16 @@ export default function App() {
                               if (!block) return null;
                               return (
                                 <div key={block.id || generateId()} className="py-0">
-                                  {block.type === 'text' && <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(block.content, safeLinks, note.categoryId) }} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'} break-words`} />}
+                                  {block.type === 'text' && <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'} break-words`} />}
                                   {block.type === 'list' && (
-                                    <div className={`flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`}>
-                                      <span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(block.content, safeLinks, note.categoryId) }} className="break-words" />
+                                    <div className={`flex items-start gap-[6px] font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`}>
+                                      <span className="text-[#666666] font-bold mt-[1px] text-[18px] leading-none shrink-0">•</span><div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="break-words flex-1" />
                                     </div>
                                   )}
                                   {block.type === 'checkbox' && (
-                                    <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
-                                      {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
-                                      <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(block.content, safeLinks, note.categoryId) }} className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#333333]'} leading-[1.6] break-words`} />
+                                    <div className="flex items-start gap-[6px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
+                                      {block.checked ? <CheckCircle2 className="w-[18px] h-[18px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[18px] h-[18px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
+                                      <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#333333]'} leading-[1.6] break-words flex-1`} />
                                     </div>
                                   )}
                                   {block.type === 'image' && !firstImageBlock && <div className="text-[12px] text-[#666666] flex items-center gap-[4px] my-1"><ImageIcon className="w-3 h-3"/> 画像</div>}
@@ -1241,7 +1231,7 @@ export default function App() {
             {/* すっきり1行のヘッダー */}
             <div className="px-3 sm:px-4 py-2 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex items-center justify-between gap-1 sm:gap-2 z-20 relative">
               <div className="flex-1 flex items-center gap-1 sm:gap-2 overflow-x-auto custom-scrollbar pb-1 -mb-1">
-                <input type="text" required value={formData.title || ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
+                <input type="text" required value={typeof formData.title === 'string' ? formData.title : ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
                 
                 {/* 期限（年を省略した MM/DD 表示） */}
                 <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-1.5 sm:px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0 hover:border-[#C4C4C4] h-8">
@@ -1260,9 +1250,9 @@ export default function App() {
                 </div>
 
                 {/* ボード名選択 */}
-                <select value={formData.categoryId || 'freenote'} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
+                <select value={typeof formData.categoryId === 'string' ? formData.categoryId : 'freenote'} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
                   <option value="freenote">フリーノート</option>
-                  {safeCategories.map(c => c && <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {safeCategories.map(c => c && c.id ? <option key={c.id} value={c.id}>{typeof c.name === 'string' ? c.name : 'ボード'}</option> : null)}
                 </select>
               </div>
 
@@ -1355,8 +1345,9 @@ export default function App() {
                     if (!block) return null;
                     return (
                       <div key={block.id || generateId()} className="flex items-start group relative">
-                        <div className={`flex justify-center shrink-0 ${block.type === 'text' ? 'w-1 sm:w-0' : 'w-6 sm:w-7 pt-[6px]'}`}> 
-                          {block.type === 'list' && <div className="text-[#666666] font-bold text-[18px]">•</div>}
+                        {/* ★ リスト・チェックボックスのアイコン位置調整（mt-[4px] でテキストのベースラインに合わせる） */}
+                        <div className={`flex justify-center shrink-0 ${block.type === 'text' ? 'w-1 sm:w-0' : 'w-6 sm:w-7 mt-[4px]'}`}> 
+                          {block.type === 'list' && <div className="text-[#666666] font-bold text-[20px] leading-none">•</div>}
                           {block.type === 'checkbox' && (
                             <div className="cursor-pointer" onClick={() => updateBlock(block.id, { checked: !block.checked })}>
                               {block.checked ? <CheckSquare className="w-5 h-5 text-[#00CC5B]" /> : <Square className="w-5 h-5 text-[#C4C4C4] hover:text-[#00CC5B]" />}
@@ -1380,11 +1371,11 @@ export default function App() {
                           ) : (
                             <ContentEditableBlock
                               id={`block-input-${block.id}`}
-                              html={block.content || ''}
+                              html={typeof block.content === 'string' ? block.content : ''}
                               onChange={(html) => updateBlock(block.id, html)}
                               onKeyDown={(e) => handleKeyDown(e, index, block.type, block.id)}
                               onPaste={(e) => handlePaste(e, block.id, index)}
-                              className={`${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'} text-[13px] sm:text-[14px] leading-[1.6]`}
+                              className={`${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'} text-[13px] sm:text-[14px] leading-[1.6] py-0.5`}
                               placeholder={block.type === 'text' ? (index === 0 ? "ここからメモを入力..." : "") : "項目を入力..."}
                             />
                           )}
@@ -1423,18 +1414,18 @@ export default function App() {
             
             <div className="flex flex-col gap-1">
               <label className="text-[12px] font-bold text-[#666666]">登録ワード <span className="text-[#ED1C24]">*</span></label>
-              <input type="text" value={linkFormData.word || ''} onChange={e => setLinkFormData({...linkFormData, word: e.target.value})} placeholder="例: デザインガイド" className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
+              <input type="text" value={typeof linkFormData.word === 'string' ? linkFormData.word : ''} onChange={e => setLinkFormData({...linkFormData, word: e.target.value})} placeholder="例: デザインガイド" className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
               <p className="text-[10px] text-[#666666]">メモ内にこのワードが含まれると自動でリンク化されます。</p>
             </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-[12px] font-bold text-[#666666]">URL <span className="text-[#ED1C24]">*</span></label>
-              <input type="url" value={linkFormData.url || ''} onChange={e => setLinkFormData({...linkFormData, url: e.target.value})} placeholder="https://..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
+              <input type="url" value={typeof linkFormData.url === 'string' ? linkFormData.url : ''} onChange={e => setLinkFormData({...linkFormData, url: e.target.value})} placeholder="https://..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
             </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-[12px] font-bold text-[#666666]">カテゴリー（グループ）</label>
-              <input type="text" value={linkFormData.groupName || ''} onChange={e => setLinkFormData({...linkFormData, groupName: e.target.value})} placeholder="例: 共有リンク、一般..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
+              <input type="text" value={typeof linkFormData.groupName === 'string' ? linkFormData.groupName : ''} onChange={e => setLinkFormData({...linkFormData, groupName: e.target.value})} placeholder="例: 共有リンク、一般..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
             </div>
 
             <div className="flex items-center justify-between mt-4">
