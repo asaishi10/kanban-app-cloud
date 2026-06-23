@@ -56,7 +56,7 @@ const compressImage = (dataUrl) => {
   });
 };
 
-// ★ 太字・下線・文字色・各種リンクをネスト（入れ子）対応で一貫かつ安全にパースする統合エンジン（安全性強化版）
+// ★ 太字・下線・文字色・各種リンクをネスト（入れ子）対応で一貫かつ安全にパースする統合エンジン（無限ループ＆クラッシュ防止セーフティ搭載）
 const parseTextToReact = (text, links = [], activeCategoryId) => {
   if (!text || typeof text !== 'string') return null;
 
@@ -67,8 +67,15 @@ const parseTextToReact = (text, links = [], activeCategoryId) => {
   let currentText = text;
   const result = [];
   let key = 0;
+  let safetyCounter = 0; // 無限ループを100%防止する安全装置
 
-  while (currentText) {
+  while (currentText && safetyCounter < 500) {
+    safetyCounter++;
+    if (safetyCounter >= 500) {
+      result.push(<span key={key++}>{currentText}</span>);
+      break;
+    }
+
     let closestMatch = null;
     let closestIndex = Infinity;
     let matchType = '';
@@ -276,6 +283,23 @@ export default function App() {
   const [canvasDragState, setCanvasDragState] = useState(null);
   const [freenoteZoom, setFreenoteZoom] = useState(1);
 
+  // ★ ゼロクラッシュ保護用安全変数
+  const safeCategories = Array.isArray(categories) ? categories.filter(Boolean) : [];
+  const safeNotes = Array.isArray(notes) ? notes.filter(Boolean) : [];
+  const safeLinks = Array.isArray(links) ? links.filter(Boolean) : [];
+
+  // ★ 復活した定義ブロック: 期限設定パーツの算出、および日付変更イベントハンドラ
+  const dueDateParts = getDueDateParts(formData.dueDate);
+  const handleDateChange = (type, val) => {
+    const newDateStr = type === 'date' ? val : (dueDateParts.date || new Date().toISOString().split('T')[0]);
+    const newHour = type === 'hour' ? val : dueDateParts.hour;
+    const newMinute = '00';
+    if (newDateStr) {
+      const dt = new Date(`${newDateStr}T${newHour}:${newMinute}:00`);
+      if (!isNaN(dt.getTime())) setFormData({...formData, dueDate: dt.toISOString()});
+    }
+  };
+
   const saveCursorPosition = (e, blockId) => {
     activeBlockInfoRef.current = { id: blockId, cursorPosition: e.target.selectionStart || 0 };
     setActiveBlockId(blockId);
@@ -345,10 +369,14 @@ export default function App() {
     let isInitialLoad = true;
 
     const unsubCategories = onSnapshot(categoriesRef, (snapshot) => {
-      const loadedCategories = snapshot.docs.map(d => d.data()).sort((a, b) => {
+      const loadedCategories = snapshot.docs.map(d => {
+        const data = d.data();
+        if (data && !data.id) data.id = d.id;
+        return data;
+      }).filter(Boolean).sort((a, b) => {
         const orderA = a.order !== undefined ? a.order : a.createdAt;
         const orderB = b.order !== undefined ? b.order : b.createdAt;
-        return orderA - orderB;
+        return (orderA || 0) - (orderB || 0);
       });
       if (loadedCategories.length === 0 && isInitialLoad) {
         const defaultId = generateId();
@@ -361,13 +389,21 @@ export default function App() {
     });
 
     const unsubNotes = onSnapshot(notesRef, (snapshot) => {
-      const loadedNotes = snapshot.docs.map(d => d.data()).sort((a, b) => a.order - b.order);
+      const loadedNotes = snapshot.docs.map(d => {
+        const data = d.data();
+        if (data && !data.id) data.id = d.id;
+        return data;
+      });
       setNotes(loadedNotes.filter(Boolean));
       setLoading(false);
     });
 
     const unsubLinks = onSnapshot(linksRef, (snapshot) => {
-      const loadedLinks = snapshot.docs.map(d => d.data()).sort((a, b) => a.order - b.order);
+      const loadedLinks = snapshot.docs.map(d => {
+        const data = d.data();
+        if (data && !data.id) data.id = d.id;
+        return data;
+      });
       setLinks(loadedLinks.filter(Boolean));
     });
 
@@ -404,7 +440,7 @@ export default function App() {
   };
 
   const handleDeleteCategory = async (id) => {
-    if (!user || categories.length <= 1) return;
+    if (!user || safeCategories.length <= 1) return;
     await deleteDoc(getCategoryDoc(id));
     if (activeCategoryId === id) {
       setActiveCategoryId('all_list');
@@ -413,18 +449,47 @@ export default function App() {
 
   const openAddModal = () => {
     setEditingNote(null);
-    const initialCategory = (activeCategoryId === 'freenote' || activeCategoryId === 'deadline' || activeCategoryId === 'linkbook' || activeCategoryId === 'all_list') ? categories[0]?.id : activeCategoryId;
+    const initialCategory = (activeCategoryId === 'freenote' || activeCategoryId === 'deadline' || activeCategoryId === 'linkbook' || activeCategoryId === 'all_list') ? (safeCategories[0]?.id || 'freenote') : activeCategoryId;
     setFormData({ title: '', categoryId: initialCategory, blocks: [{ id: generateId(), type: 'text', content: '', checked: false }], dueDate: '' });
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
     setIsModalOpen(true);
   };
 
+  // ★ 改善点: 古いデータ・不完全なテキストブロックを新仕様のブロック配列へ自動クレンジングしてクラッシュを完璧に防止
   const openEditModal = (note) => {
     if (!note) return;
     setEditingNote(note);
-    const initialBlocks = Array.isArray(note.blocks) ? note.blocks : [{ id: generateId(), type: 'text', content: note.content || '', checked: false }];
-    setFormData({ ...note, blocks: initialBlocks });
+    
+    let initialBlocks = [];
+    if (Array.isArray(note.blocks)) {
+      initialBlocks = note.blocks.map(b => {
+        if (typeof b === 'string') {
+          return { id: generateId(), type: 'text', content: b, checked: false };
+        }
+        if (b && typeof b === 'object') {
+          return {
+            id: b.id || generateId(),
+            type: b.type || 'text',
+            content: b.content || '',
+            checked: !!b.checked
+          };
+        }
+        return null;
+      }).filter(Boolean);
+    }
+    
+    if (initialBlocks.length === 0) {
+      initialBlocks = [{ id: generateId(), type: 'text', content: note.content || '', checked: false }];
+    }
+
+    setFormData({ 
+      ...note, 
+      title: typeof note.title === 'string' ? note.title : '',
+      categoryId: note.categoryId || 'freenote',
+      blocks: initialBlocks,
+      dueDate: note.dueDate || ''
+    });
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
     setIsModalOpen(true);
@@ -451,9 +516,9 @@ export default function App() {
   const toggleComplete = async (e, id) => {
     e.stopPropagation();
     if (!user) return;
-    const note = notes.find(n => n && n.id === id);
+    const note = safeNotes.find(n => n && n.id === id);
     if (note) {
-      setNotes(notes.map(n => n && n.id === id ? { ...n, isCompleted: !n.isCompleted } : n));
+      setNotes(safeNotes.map(n => n && n.id === id ? { ...n, isCompleted: !n.isCompleted } : n));
       await setDoc(getNoteDoc(id), { isCompleted: !note.isCompleted }, { merge: true });
     }
   };
@@ -461,10 +526,10 @@ export default function App() {
   const handleBoardBlockCheckToggle = async (e, noteId, blockId) => {
     e.stopPropagation();
     if (!user) return;
-    const note = notes.find(n => n && n.id === noteId);
+    const note = safeNotes.find(n => n && n.id === noteId);
     if (note && Array.isArray(note.blocks)) {
       const newBlocks = note.blocks.map(b => b && b.id === blockId ? { ...b, checked: !b.checked } : b);
-      setNotes(notes.map(n => n && n.id === noteId ? { ...n, blocks: newBlocks } : n));
+      setNotes(safeNotes.map(n => n && n.id === noteId ? { ...n, blocks: newBlocks } : n));
       await setDoc(getNoteDoc(noteId), { blocks: newBlocks }, { merge: true });
     }
   };
@@ -506,7 +571,7 @@ export default function App() {
     const sourceNoteId = e.dataTransfer.getData('noteId');
 
     if (sourceCategoryId && sourceCategoryId !== targetCategoryId && user) {
-      const sortedCategories = [...categories];
+      const sortedCategories = [...safeCategories];
       const srcIdx = sortedCategories.findIndex(c => c && c.id === sourceCategoryId);
       if (srcIdx === -1) return;
 
@@ -529,7 +594,7 @@ export default function App() {
     }
 
     if (!sourceNoteId || targetCategoryId === activeCategoryId || !user) return;
-    setNotes(notes.map(n => n && n.id === sourceNoteId ? { ...n, categoryId: targetCategoryId, order: Date.now() } : n));
+    setNotes(safeNotes.map(n => n && n.id === sourceNoteId ? { ...n, categoryId: targetCategoryId, order: Date.now() } : n));
     await setDoc(getNoteDoc(sourceNoteId), { categoryId: targetCategoryId, order: Date.now() }, { merge: true });
   };
 
@@ -560,7 +625,7 @@ export default function App() {
     const sourceId = e.dataTransfer.getData('noteId');
     if (!sourceId || sourceId === targetId || !user) return;
     
-    const categoryNotes = notes.filter(n => n && n.categoryId === activeCategoryId).sort((a,b) => a.order - b.order);
+    const categoryNotes = safeNotes.filter(n => n && n.categoryId === activeCategoryId).sort((a,b) => a.order - b.order);
     const sourceIndex = categoryNotes.findIndex(n => n && n.id === sourceId);
     if (sourceIndex === -1) return;
     
@@ -593,13 +658,21 @@ export default function App() {
   };
   const handleFreenotePointerUp = async (e) => {
     if (!canvasDragState) return;
-    const targetNote = notes.find(n => n && n.id === canvasDragState.id);
+    const targetNote = safeNotes.find(n => n && n.id === canvasDragState.id);
     setCanvasDragState(null);
     if (targetNote && user) await setDoc(getNoteDoc(targetNote.id), { x: targetNote.x, y: targetNote.y }, { merge: true });
   };
   
+  // ★ SVGやアイコン部分をダブルクリックした際の className のオブジェクト・メソッド未定義によるクラッシュを完璧に防止
   const handleFreenoteDoubleClick = (e) => {
-    if (!e.target.className.includes('pointer-events-auto') && !e.target.className.includes('radial-gradient')) return;
+    if (!e || !e.target) return;
+    const className = e.target.className;
+    const classStr = (typeof className === 'string') 
+      ? className 
+      : (className && typeof className.baseVal === 'string' ? className.baseVal : '');
+    
+    if (!classStr.includes('pointer-events-auto') && !classStr.includes('radial-gradient')) return;
+
     const rect = freenoteRef.current.getBoundingClientRect();
     const x = (e.clientX - rect.left + freenoteRef.current.scrollLeft) / freenoteZoom;
     const y = (e.clientY - rect.top + freenoteRef.current.scrollTop) / freenoteZoom;
@@ -630,7 +703,7 @@ export default function App() {
     const sourceId = e.dataTransfer.getData('linkId');
     if (!sourceId || sourceId === targetId || !user) return;
 
-    const currentLinks = linkFilter === 'すべて' ? links : links.filter(l => (l.groupName || 'すべて') === linkFilter);
+    const currentLinks = linkFilter === 'すべて' ? safeLinks : safeLinks.filter(l => (l.groupName || 'すべて') === linkFilter);
     const sortedCurrentLinks = currentLinks.sort((a,b) => a.order - b.order);
     
     const sourceIdx = sortedCurrentLinks.findIndex(l => l && l.id === sourceId);
@@ -659,11 +732,47 @@ export default function App() {
     setLinkDragOverIndicator(null);
   };
 
-  // 削除確認処理
-  const requestDeleteCategory = (id, name) => setConfirmDialog({ isOpen: true, message: `ボード「${name}」を削除しますか？`, targetId: id, actionType: 'category' });
-  const requestDeleteNote = (id) => setConfirmDialog({ isOpen: true, message: 'このメモを削除しますか？', targetId: id, actionType: 'note' });
-  const requestDeleteLink = (id) => setConfirmDialog({ isOpen: true, message: 'このリンクを削除しますか？', targetId: id, actionType: 'link' });
+  // 11:08:55 以降の復旧追加された activeNotes 等の算出、および安全対策
+  let activeNotes = [];
+  if (activeCategoryId === 'all_list') {
+    let filtered = safeNotes.filter(n => n && (showCompleted ? true : !n.isCompleted));
+    const categoryOrderMap = safeCategories.reduce((acc, cat) => { if (cat && cat.id) acc[cat.id] = cat.order; return acc; }, {});
+    
+    filtered.sort((a, b) => {
+      if (!a || !b) return 0;
+      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      const orderA = a.categoryId === 'freenote' ? -1 : (categoryOrderMap[a.categoryId] !== undefined ? categoryOrderMap[a.categoryId] : Infinity);
+      const orderB = b.categoryId === 'freenote' ? -1 : (categoryOrderMap[b.categoryId] !== undefined ? categoryOrderMap[b.categoryId] : Infinity);
 
+      if (allListSortConfig.key === 'dueDate') {
+        if (dateA !== dateB) return allListSortConfig.direction === 'asc' ? (dateA < dateB ? -1 : 1) : (dateA < dateB ? 1 : -1);
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.order || 0) - (b.order || 0);
+      } else if (allListSortConfig.key === 'category') {
+        if (orderA !== orderB) return allListSortConfig.direction === 'asc' ? orderA - orderB : orderB - orderA;
+        if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+        return (a.order || 0) - (b.order || 0);
+      }
+      return 0;
+    });
+    activeNotes = filtered;
+  } else if (activeCategoryId === 'deadline') {
+    activeNotes = safeNotes.filter(n => n && n.dueDate && (showCompleted ? true : !n.isCompleted)).sort((a, b) => {
+      if (!a || !b) return 0;
+      return new Date(a.dueDate) - new Date(b.dueDate);
+    });
+  } else if (activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook') {
+    activeNotes = safeNotes.filter(n => n && n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted));
+  }
+
+  // ★ ゼロクラッシュ配列
+  const safeActiveNotes = Array.isArray(activeNotes) ? activeNotes.filter(Boolean) : [];
+  const linkGroups = ['すべて', ...Array.from(new Set(safeLinks.map(l => l?.groupName).filter(Boolean)))];
+  if (!linkGroups.includes('一般')) linkGroups.push('一般');
+  const filteredLinks = linkFilter === 'すべて' ? safeLinks : safeLinks.filter(l => l && (l.groupName || '一般') === linkFilter);
+
+  // 確認ダイアログ用アクションの実行
   const executeConfirmAction = async () => {
     const { actionType, targetId } = confirmDialog;
     if (actionType === 'category') {
@@ -719,126 +828,7 @@ export default function App() {
   const updateBlock = (blockId, updates) => setFormData(prev => ({ ...prev, blocks: prev.blocks.map(b => b && b.id === blockId ? { ...b, ...updates } : b) }));
   const removeBlock = (blockId) => setFormData(prev => ({ ...prev, blocks: prev.blocks.filter(b => b && b.id !== blockId) }));
 
-  // インラインテキスト装飾の適用ヘルパー
-  const applyTextStyle = (styleType, colorValue = null) => {
-    const targetId = activeBlockId || activeBlockInfoRef.current.id;
-    if (!targetId) return;
-
-    const textarea = document.getElementById(`block-input-${targetId}`);
-    if (!textarea) return;
-
-    const start = textarea.selectionStart || 0;
-    const end = textarea.selectionEnd || 0;
-    const text = textarea.value || '';
-    const selectedText = text.substring(start, end);
-
-    let replacement = '';
-    if (styleType === 'bold') {
-      replacement = `**${selectedText || '太字'}**`;
-    } else if (styleType === 'underline') {
-      replacement = `__${selectedText || '下線'}__`;
-    } else if (styleType === 'color') {
-      replacement = `[color:${colorValue}](${selectedText || '色付き文字'})`;
-    }
-
-    const newValue = text.substring(0, start) + replacement + text.substring(end);
-    updateBlock(targetId, { content: newValue });
-
-    // 装飾を適用した瞬間、生テキストに留まらず即プレビュー表示に切り替える
-    setTimeout(() => {
-      setActiveBlockId(null);
-    }, 50);
-  };
-
-  const handleKeyDown = (e, index, blockType) => {
-    if (e.nativeEvent.isComposing) return;
-    
-    if (e.key === 'Backspace' && formData.blocks[index] && formData.blocks[index].content === '') {
-      e.preventDefault();
-      if (formData.blocks.length > 1) {
-        removeBlock(formData.blocks[index].id);
-        if (index > 0) {
-          const prevBlock = formData.blocks[index - 1];
-          if (prevBlock) {
-            setTimeout(() => {
-              const prevInput = document.getElementById(`block-input-${prevBlock.id}`);
-              if (prevInput) {
-                prevInput.focus();
-                const len = prevInput.value.length;
-                prevInput.setSelectionRange(len, len);
-              }
-            }, 10);
-            activeBlockInfoRef.current = { id: prevBlock.id, cursorPosition: (prevBlock.content || '').length };
-            setActiveBlockId(prevBlock.id);
-          }
-        }
-      }
-      return;
-    }
-
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (blockType === 'list' || blockType === 'checkbox') {
-        e.preventDefault();
-        const newId = generateId();
-        const newBlock = { id: newId, type: blockType, content: '', checked: false };
-        const newBlocks = [...formData.blocks];
-        newBlocks.splice(index + 1, 0, newBlock);
-        setFormData({ ...formData, blocks: newBlocks });
-        
-        setTimeout(() => { const el = document.getElementById(`block-input-${newId}`); if (el) el.focus(); }, 10);
-        activeBlockInfoRef.current = { id: newId, cursorPosition: 0 };
-        setActiveBlockId(newId);
-      }
-    }
-  };
-
-  const insertContentIntoText = (contentData, type) => {
-    setFormData(prev => {
-      const { id: targetId, cursorPosition } = activeBlockInfoRef.current;
-      const activeIdx = prev.blocks.findIndex(b => b && b.id === targetId);
-
-      if (activeIdx !== -1 && prev.blocks[activeIdx] && prev.blocks[activeIdx].type === 'text') {
-        const targetBlock = prev.blocks[activeIdx];
-        const textBefore = (targetBlock.content || '').substring(0, cursorPosition);
-        const textAfter = (targetBlock.content || '').substring(cursorPosition);
-
-        const newContentId = generateId();
-        const newTextId = generateId();
-        const newBlocks = [...prev.blocks];
-
-        newBlocks[activeIdx] = { ...targetBlock, content: textBefore };
-        
-        if (type === 'image') {
-          newBlocks.splice(activeIdx + 1, 0, { id: newContentId, type: 'image', content: contentData }, { id: newTextId, type: 'text', content: textAfter, checked: false });
-        } else if (type === 'text') {
-          const combinedContent = textBefore + contentData + textAfter;
-          newBlocks[activeIdx] = { ...targetBlock, content: combinedContent };
-          activeBlockInfoRef.current = { id: targetId, cursorPosition: cursorPosition + contentData.length };
-          return { ...prev, blocks: newBlocks };
-        }
-
-        setTimeout(() => { const el = document.getElementById(`block-input-${newTextId}`); if(el) el.focus(); }, 50);
-        activeBlockInfoRef.current = { id: newTextId, cursorPosition: 0 };
-        setActiveBlockId(newTextId);
-        return { ...prev, blocks: newBlocks };
-      } else {
-        const newContentId = generateId();
-        const newTextId = generateId();
-        const insertIdx = activeIdx !== -1 ? activeIdx + 1 : prev.blocks.length;
-        const newBlocks = [...prev.blocks];
-        
-        if (type === 'image') {
-          newBlocks.splice(insertIdx, 0, { id: newContentId, type: 'image', content: contentData }, { id: newTextId, type: 'text', content: '', checked: false });
-        }
-        
-        setTimeout(() => { const el = document.getElementById(`block-input-${newTextId}`); if(el) el.focus(); }, 50);
-        activeBlockInfoRef.current = { id: newTextId, cursorPosition: 0 };
-        setActiveBlockId(newTextId);
-        return { ...prev, blocks: newBlocks };
-      }
-    });
-  };
-
+  // ★ 復活した定義ブロック：画像を選択した際のイベントハンドラ
   const handleImageSelect = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -925,84 +915,17 @@ export default function App() {
     }
   };
 
-  if (!isConfigValid) {
-    return (
-      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333] p-6">
-        <div className="bg-[#FFFFFF] p-8 rounded-2xl shadow-lg border border-[#D7DCD9] max-w-lg w-full">
-          <div className="w-16 h-16 bg-[#F7F9F8] text-[#FFE600] rounded-full flex items-center justify-center mx-auto mb-4"><AlertCircle className="w-8 h-8" /></div>
-          <h2 className="text-[20px] font-bold mb-4 text-center">Firebaseの設定が完了していません</h2>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user && !loading) {
-    return (
-      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333] p-6">
-        <div className="bg-[#FFFFFF] p-10 rounded-3xl shadow-xl border border-[#D7DCD9] max-w-md w-full text-center">
-          <div className="w-20 h-20 bg-[#E0FFEE] text-[#00CC5B] rounded-2xl flex items-center justify-center mx-auto mb-6 transform rotate-3"><CheckSquare className="w-10 h-10" /></div>
-          <h1 className="text-[32px] font-bold mb-2 text-[#333333]">Kanban Notes</h1>
-          <button onClick={handleGoogleLogin} className="mt-8 w-full flex items-center justify-center gap-[8px] bg-[#FFFFFF] border-2 border-[#D7DCD9] hover:border-[#00CC5B] hover:bg-[#F7F9F8] text-[#333333] px-6 py-4 rounded-xl font-bold text-[16px] transition-all shadow-sm">
-            Googleでログインして始める
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#666666]">
+      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333]">
         <Loader2 className="w-8 h-8 animate-spin text-[#00CC5B] mb-4" />
         <p className="font-medium text-[16px]">同期中...</p>
       </div>
     );
   }
 
-  // --- activeNotes の定義ロジックを正しい位置（レンダリングの直前）に復旧・追加 ---
-  let activeNotes = [];
-  if (activeCategoryId === 'all_list') {
-    let filtered = notes.filter(n => n && (showCompleted ? true : !n.isCompleted));
-    const categoryOrderMap = categories.reduce((acc, cat) => { if (cat && cat.id) acc[cat.id] = cat.order; return acc; }, {});
-    
-    filtered.sort((a, b) => {
-      if (!a || !b) return 0;
-      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      const orderA = a.categoryId === 'freenote' ? -1 : (categoryOrderMap[a.categoryId] !== undefined ? categoryOrderMap[a.categoryId] : Infinity);
-      const orderB = b.categoryId === 'freenote' ? -1 : (categoryOrderMap[b.categoryId] !== undefined ? categoryOrderMap[b.categoryId] : Infinity);
-
-      if (allListSortConfig.key === 'dueDate') {
-        if (dateA !== dateB) return allListSortConfig.direction === 'asc' ? (dateA < dateB ? -1 : 1) : (dateA < dateB ? 1 : -1);
-        if (orderA !== orderB) return orderA - orderB;
-        return (a.order || 0) - (b.order || 0);
-      } else if (allListSortConfig.key === 'category') {
-        if (orderA !== orderB) return allListSortConfig.direction === 'asc' ? orderA - orderB : orderB - orderA;
-        if (dateA !== dateB) return dateA < dateB ? -1 : 1;
-        return (a.order || 0) - (b.order || 0);
-      }
-      return 0;
-    });
-    activeNotes = filtered;
-  } else if (activeCategoryId === 'deadline') {
-    activeNotes = notes.filter(n => n && n.dueDate && (showCompleted ? true : !n.isCompleted)).sort((a, b) => {
-      if (!a || !b) return 0;
-      return new Date(a.dueDate) - new Date(b.dueDate);
-    });
-  } else if (activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook') {
-    activeNotes = notes.filter(n => n && n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted));
-  }
-
   return (
     <div className="flex h-screen overflow-hidden bg-[#F7F9F8] text-[#333333]">
-      <style dangerouslySetInnerHTML={{__html: `
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@500;700&family=Roboto:wght@500;700&display=swap');
-        body { font-family: 'Roboto', 'Noto Sans JP', sans-serif; font-weight: 500; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #D7DCD9; border-radius: 20px; }
-      `}} />
-
       {/* サイドバー（ドロワー）オーバーレイ背景 */}
       {isSidebarOpen && (
         <div 
@@ -1051,13 +974,13 @@ export default function App() {
               </div>
             </div>
 
-            {categories.filter(Boolean).map(category => (
+            {safeCategories.map(category => (
               <div
-                key={category.id}
+                key={category.id || generateId()}
                 draggable={isCategoryEditMode}
                 onDragStart={(e) => handleCategoryDragStart(e, category.id)}
                 onDragEnd={handleCategoryDragEnd}
-                onClick={() => { if (!isCategoryEditMode) handleTabClick(category.id); }}
+                onClick={() => { if (!isCategoryEditMode && category.id) handleTabClick(category.id); }}
                 onDragOver={(e) => handleCategoryDragOver(e, category.id)}
                 onDragLeave={() => { setDragOverCategoryId(null); setCategoryDragOverIndicator(null); }}
                 onDrop={(e) => handleCategoryDrop(e, category.id)}
@@ -1079,11 +1002,11 @@ export default function App() {
                   <input type="text" value={editingCategoryName} onChange={(e) => setEditingCategoryName(e.target.value)} onBlur={() => saveCategoryName(category.id)} onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)} autoFocus className="border border-[#00CC5B] rounded px-2 py-0.5 text-[14px] outline-none bg-[#FFFFFF] w-full" />
                 ) : (
                   <>
-                    <span className="font-bold text-[14px] select-none flex-1 truncate">{category.name}</span>
+                    <span className="font-bold text-[14px] select-none flex-1 truncate">{category.name || '無題のボード'}</span>
                     {isCategoryEditMode && (
                       <div className="flex items-center ml-1 shrink-0 gap-1">
                         <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#00CC5B] hover:bg-[#E0FFEE] transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
-                        {categories.length > 1 && <button onClick={(e) => { e.stopPropagation(); requestDeleteCategory(category.id, category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#ED1C24] transition-colors rounded"><X className="w-3.5 h-3.5" /></button>}
+                        {safeCategories.length > 1 && <button onClick={(e) => { e.stopPropagation(); requestDeleteCategory(category.id, category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#ED1C24] transition-colors rounded"><X className="w-3.5 h-3.5" /></button>}
                       </div>
                     )}
                   </>
@@ -1101,7 +1024,7 @@ export default function App() {
           </div>
       </aside>
 
-      {/* メイン画面（常にフル幅） */}
+      {/* メイン画面 */}
       <div className="flex-1 flex flex-col w-full h-full overflow-hidden relative">
         {/* ヘッダー */}
         <header className="bg-[#FFFFFF] border-b border-[#D7DCD9] h-16 flex items-center justify-between px-4 sm:px-6 shrink-0 z-10">
@@ -1110,7 +1033,7 @@ export default function App() {
               <Menu className="w-6 h-6" />
             </button>
             <h2 className="text-[18px] sm:text-[20px] font-bold text-[#333333]">
-              {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : categories.find(c => c && c.id === activeCategoryId)?.name || 'ボード'}
+              {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : safeCategories.find(c => c && c.id === activeCategoryId)?.name || 'ボード'}
             </h2>
           </div>
           
@@ -1149,10 +1072,9 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {activeNotes.filter(Boolean).map((note, index) => {
-                        const catName = note.categoryId === 'freenote' ? 'フリーノート' : categories.find(c => c && c.id === note.categoryId)?.name || '不明';
+                      {safeActiveNotes.map((note, index) => {
+                        const catName = note.categoryId === 'freenote' ? 'フリーノート' : safeCategories.find(c => c && c.id === note.categoryId)?.name || '不明';
                         const dueDateInfo = formatDueDate(note.dueDate);
-                        // 本文からテキスト情報だけを抽出し、改行や余分な空白を取り除いて1行にする (安全に配列判定)
                         const plainText = Array.isArray(note.blocks)
                           ? note.blocks.filter(b => b && (b.type === 'text' || b.type === 'list' || b.type === 'checkbox')).map(b => b.content || '').join(' ').replace(/\s+/g, ' ').trim()
                           : '';
@@ -1174,8 +1096,9 @@ export default function App() {
                             <td className="px-2 py-1.5 text-[#666666] text-[12px] font-medium truncate max-w-[80px] sm:max-w-[120px]">
                               {catName}
                             </td>
+                            {/* オブジェクト型エラーを100%防ぐ文字列キャスト */}
                             <td className={`px-2 py-1.5 font-bold truncate max-w-[100px] sm:max-w-[180px] ${note.isCompleted ? 'text-[#666666] line-through' : ''}`}>
-                              {note.title || '無題'}
+                              {typeof note.title === 'string' ? note.title : String(note.title || '無題')}
                             </td>
                             <td className={`px-2 py-1.5 truncate max-w-[120px] sm:max-w-[250px] lg:max-w-[400px] text-[12px] ${note.isCompleted ? 'text-[#C4C4C4]' : 'text-[#666666]'}`}>
                               {plainText || <span className="text-[#C4C4C4]">-</span>}
@@ -1185,7 +1108,7 @@ export default function App() {
                       })}
                     </tbody>
                   </table>
-                  {activeNotes.length === 0 && <div className="p-8 text-center text-[#666666] font-medium">メモがありません。</div>}
+                  {safeActiveNotes.length === 0 && <div className="p-8 text-center text-[#666666] font-medium">メモがありません。</div>}
                 </div>
               </div>
             </div>
@@ -1196,7 +1119,7 @@ export default function App() {
               <div className="w-full h-full overflow-auto custom-scrollbar" ref={freenoteRef} onDoubleClick={handleFreenoteDoubleClick}>
                 <div style={{ width: 5000 * freenoteZoom, height: 5000 * freenoteZoom, backgroundImage: 'radial-gradient(#D7DCD9 2px, transparent 2px)', backgroundSize: `${30 * freenoteZoom}px ${30 * freenoteZoom}px` }} className="relative pointer-events-none origin-top-left">
                   <div className="pointer-events-auto" style={{ transform: `scale(${freenoteZoom})`, transformOrigin: '0 0', width: 5000, height: 5000 }}>
-                    {notes.filter(n => n && n.categoryId === 'freenote').map(note => {
+                    {safeNotes.filter(n => n && n.categoryId === 'freenote').map(note => {
                       const firstImageBlock = Array.isArray(note.blocks) ? note.blocks.find(b => b && b.type === 'image') : null;
                       const dueDateInfo = formatDueDate(note.dueDate);
                       return (
@@ -1207,7 +1130,7 @@ export default function App() {
                           onPointerMove={handleFreenotePointerMove}
                           onPointerUp={handleFreenotePointerUp}
                           onPointerCancel={handleFreenotePointerUp}
-                          className="bg-[#FFFFFF] rounded-xl border border-[#D7DCD9] shadow-md touch-none cursor-grab active:cursor-grabbing hover:border-[#00CC5B] transition-colors z-0 hover:z-10"
+                          className="bg-[#FFFFFF] rounded-xl border border-[#D7DCD9] shadow-md touch-none cursor-grab active:cursor-grabbing hover:border-[#00CC5B] transition-colors z-0 hover:z-10 animate-in fade-in duration-200"
                         >
                           <div className="p-3">
                             {dueDateInfo && !note.isCompleted && (
@@ -1221,7 +1144,7 @@ export default function App() {
                               </div>
                             )}
                             <div className="flex justify-between items-start mb-2">
-                              <h3 className="font-bold text-[#333333] text-[16px] pr-2 leading-[1.6] line-clamp-2">{note.title || '無題'}</h3>
+                              <h3 className="font-bold text-[#333333] text-[16px] pr-2 leading-[1.6] line-clamp-2">{typeof note.title === 'string' ? note.title : String(note.title || '無題')}</h3>
                               <button onClick={(e) => { e.stopPropagation(); openEditModal(note); }} className="no-drag p-1 text-[#666666] hover:text-[#00CC5B] bg-[#F7F9F8] rounded-md shrink-0"><Edit2 className="w-4 h-4"/></button>
                             </div>
                             <div className="max-h-[300px] overflow-hidden relative no-drag text-[12px]">
@@ -1229,18 +1152,18 @@ export default function App() {
                                 {Array.isArray(note.blocks) && note.blocks.slice(0, 20).map(block => {
                                   if (!block) return null;
                                   return (
-                                    <div key={block.id} className="py-0">
-                                      {block.type === 'text' && <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666]" />}
+                                    <div key={block.id || generateId()} className="py-0">
+                                      {block.type === 'text' && <FormattedText text={block.content || ''} links={safeLinks} activeCategoryId={note.categoryId} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666]" />}
                                       {block.type === 'list' && (
                                         <div className="flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] text-[#666666]">
-                                          <span className="font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
+                                          <span className="font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content || ''} links={safeLinks} activeCategoryId={note.categoryId} /></span>
                                         </div>
                                       )}
                                       {block.type === 'checkbox' && (
                                         <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
                                           {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
                                           <span className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6]`}>
-                                            <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} />
+                                            <FormattedText text={block.content || ''} links={safeLinks} activeCategoryId={note.categoryId} />
                                           </span>
                                         </div>
                                       )}
@@ -1330,14 +1253,14 @@ export default function App() {
 
           {activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook' && activeCategoryId !== 'all_list' && (
             <div className="max-w-7xl mx-auto h-full p-4 sm:p-6">
-              {activeNotes.length === 0 ? (
+              {safeActiveNotes.length === 0 ? (
                 <div onClick={() => openAddModal()} className="text-center py-16 border-2 border-dashed border-[#D7DCD9] rounded-2xl text-[#666666] hover:border-[#00CC5B] hover:text-[#00AC4C] transition-colors cursor-pointer max-w-lg mx-auto mt-10">
                   <div className="text-[18px] font-bold mb-2">メモがありません</div>
                   <div className="text-[14px] font-medium">＋ ここをクリックして新しいメモを追加</div>
                 </div>
               ) : (
                 <div className="columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 pb-10">
-                  {activeNotes.filter(Boolean).map((note) => {
+                  {safeActiveNotes.map((note) => {
                     const firstImageBlock = Array.isArray(note.blocks) ? note.blocks.find(b => b && b.type === 'image') : null;
                     const dueDateInfo = formatDueDate(note.dueDate);
                     return (
@@ -1370,7 +1293,7 @@ export default function App() {
                         )}
                         <div className="flex items-start justify-between gap-1 sm:gap-2 mb-2">
                           <h3 className={`font-bold leading-[1.6] line-clamp-2 pr-5 sm:pr-6 text-[16px] ${note.isCompleted ? 'text-[#666666] line-through' : 'text-[#333333]'}`}>
-                            {note.title}
+                            {typeof note.title === 'string' ? note.title : String(note.title || '無題')}
                           </h3>
                           <button onClick={(e) => toggleComplete(e, note.id)} className={`absolute top-2 right-2 sm:top-3 sm:right-3 transition-colors p-0.5 sm:p-1 rounded-full shadow-sm border z-10 ${note.isCompleted ? 'text-[#00CC5B] bg-[#E0FFEE] border-[#00CC5B]' : 'text-[#C4C4C4] bg-[#FFFFFF] border-[#D7DCD9]'}`}>
                             {note.isCompleted ? <CheckCircle2 className="w-4 h-4 sm:w-5 h-5" /> : <Circle className="w-4 h-4 sm:w-5 h-5 hover:text-[#00CC5B]" />}
@@ -1381,18 +1304,18 @@ export default function App() {
                             {Array.isArray(note.blocks) && note.blocks.map(block => {
                               if (!block) return null;
                               return (
-                                <div key={block.id} className="py-0">
-                                  {block.type === 'text' && <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`} />}
+                                <div key={block.id || generateId()} className="py-0">
+                                  {block.type === 'text' && <FormattedText text={block.content || ''} links={safeLinks} activeCategoryId={note.categoryId} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`} />}
                                   {block.type === 'list' && (
                                     <div className={`flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`}>
-                                      <span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
+                                      <span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content || ''} links={safeLinks} activeCategoryId={note.categoryId} /></span>
                                     </div>
                                   )}
                                   {block.type === 'checkbox' && (
                                     <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
                                       {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
                                       <span className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#333333]'} leading-[1.6]`}>
-                                        <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} />
+                                        <FormattedText text={block.content || ''} links={safeLinks} activeCategoryId={note.categoryId} />
                                       </span>
                                     </div>
                                   )}
@@ -1415,13 +1338,13 @@ export default function App() {
 
       {/* メモ編集モーダル */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-[#333333]/60 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 z-50">
-          <div className="bg-[#FFFFFF] sm:rounded-2xl shadow-2xl w-full max-w-2xl h-full sm:h-[95vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-[#333333]/60 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-[#FFFFFF] sm:rounded-2xl shadow-2xl w-full max-w-2xl h-full sm:h-[95vh] sm:max-h-[90vh] flex flex-col">
             
             {/* すっきり1行のヘッダー */}
             <div className="px-3 sm:px-4 py-2 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex items-center justify-between gap-1 sm:gap-2 z-20 relative">
               <div className="flex-1 flex items-center gap-1 sm:gap-2 overflow-x-auto custom-scrollbar pb-1 -mb-1">
-                <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
+                <input type="text" required value={formData.title || ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
                 
                 {/* 期限（年を省略した MM/DD 表示） */}
                 <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-1.5 sm:px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0 hover:border-[#C4C4C4] h-8">
@@ -1439,16 +1362,15 @@ export default function App() {
                   <span className="text-[#666666] text-[11px] sm:text-[12px] font-medium ml-0.5">時</span>
                 </div>
 
-                {/* ボード名選択（コンパクト化） */}
-                <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
+                {/* ボード名選択 */}
+                <select value={formData.categoryId || 'freenote'} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
                   <option value="freenote">フリーノート</option>
-                  {categories.map(c => c && <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {safeCategories.map(c => c && <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
 
               {/* ヘッダー右側の固定アクションエリア */}
               <div className="flex items-center gap-1 sm:gap-2 shrink-0 pl-1 sm:pl-2 ml-auto">
-                {/* ツールバー開閉トグルボタン */}
                 <button 
                   type="button" 
                   onClick={() => setIsToolbarOpen(!isToolbarOpen)} 
@@ -1537,7 +1459,7 @@ export default function App() {
                   {Array.isArray(formData.blocks) && formData.blocks.map((block, index) => {
                     if (!block) return null;
                     return (
-                      <div key={block.id} className="flex items-start group relative">
+                      <div key={block.id || generateId()} className="flex items-start group relative">
                         <div className={`flex justify-center shrink-0 ${block.type === 'text' ? 'w-1 sm:w-0' : 'w-6 sm:w-7 pt-[6px]'}`}> 
                           {block.type === 'list' && <div className="text-[#666666] font-bold text-[18px]">•</div>}
                           {block.type === 'checkbox' && (
@@ -1565,7 +1487,7 @@ export default function App() {
                             activeBlockId === block.id ? (
                               <textarea
                                 id={`block-input-${block.id}`}
-                                value={block.content}
+                                value={block.content || ''}
                                 onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); saveCursorPosition(e, block.id); }}
                                 onKeyDown={(e) => { handleKeyDown(e, index, block.type); saveCursorPosition(e, block.id); }}
                                 onKeyUp={(e) => saveCursorPosition(e, block.id)}
@@ -1607,7 +1529,7 @@ export default function App() {
                                 {block.content ? (
                                   <FormattedText 
                                     text={block.content} 
-                                    links={links} 
+                                    links={safeLinks} 
                                     activeCategoryId={formData.categoryId} 
                                     className={`whitespace-pre-wrap font-medium leading-[1.6] text-[13px] sm:text-[14px] ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'}`}
                                   />
@@ -1654,18 +1576,18 @@ export default function App() {
             
             <div className="flex flex-col gap-1">
               <label className="text-[12px] font-bold text-[#666666]">登録ワード <span className="text-[#ED1C24]">*</span></label>
-              <input type="text" value={linkFormData.word} onChange={e => setLinkFormData({...linkFormData, word: e.target.value})} placeholder="例: デザインガイド" className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
+              <input type="text" value={linkFormData.word || ''} onChange={e => setLinkFormData({...linkFormData, word: e.target.value})} placeholder="例: デザインガイド" className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
               <p className="text-[10px] text-[#666666]">メモ内にこのワードが含まれると自動でリンク化されます。</p>
             </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-[12px] font-bold text-[#666666]">URL <span className="text-[#ED1C24]">*</span></label>
-              <input type="url" value={linkFormData.url} onChange={e => setLinkFormData({...linkFormData, url: e.target.value})} placeholder="https://..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
+              <input type="url" value={linkFormData.url || ''} onChange={e => setLinkFormData({...linkFormData, url: e.target.value})} placeholder="https://..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
             </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-[12px] font-bold text-[#666666]">カテゴリー（グループ）</label>
-              <input type="text" value={linkFormData.groupName} onChange={e => setLinkFormData({...linkFormData, groupName: e.target.value})} placeholder="例: 共有リンク、一般..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
+              <input type="text" value={linkFormData.groupName || ''} onChange={e => setLinkFormData({...linkFormData, groupName: e.target.value})} placeholder="例: 共有リンク、一般..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
             </div>
 
             <div className="flex items-center justify-between mt-4">
@@ -1674,7 +1596,7 @@ export default function App() {
               ) : <div></div>}
               <div className="flex items-center gap-2">
                 <button onClick={() => setIsLinkModalOpen(false)} className="px-4 py-2 text-[#666666] bg-[#FFFFFF] border border-[#D7DCD9] hover:bg-[#F7F9F8] rounded-lg font-bold text-[14px]">キャンセル</button>
-                <button onClick={saveLink} disabled={!linkFormData.word || !linkFormData.url} className="px-5 py-2 bg-[#00CC5B] hover:bg-[#00AC4C] disabled:bg-[#C4C4C4] text-[#FFFFFF] rounded-lg font-bold text-[14px] transition-colors">保存</button>
+                <button onClick={saveLink} disabled={!linkFormData.word || !linkFormData.url} className="px-5 py-2 bg-[#00CC5B] hover:bg-[#00AC4C] text-[#FFFFFF] rounded-lg font-bold text-[14px] transition-colors">保存</button>
               </div>
             </div>
           </div>
