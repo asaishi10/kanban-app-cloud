@@ -58,7 +58,7 @@ const compressImage = (dataUrl) => {
 
 // ★ 太字・下線・文字色・各種リンクをネスト（入れ子）対応で一貫かつ安全にパースする統合エンジン（安全性強化版）
 const parseTextToReact = (text, links = [], activeCategoryId) => {
-  if (!text) return null;
+  if (!text || typeof text !== 'string') return null;
 
   // word プロパティが確実に存在する有効なリンクのみにフィルタリング
   const validLinks = (links || []).filter(l => l && typeof l.word === 'string' && l.word.trim() !== '' && (!l.groupName || l.groupName === 'すべて' || l.groupName === activeCategoryId));
@@ -355,20 +355,20 @@ export default function App() {
         const now = Date.now();
         setDoc(doc(categoriesRef, defaultId), { id: defaultId, name: 'メインボード', createdAt: now, order: now });
       } else {
-        setCategories(loadedCategories);
+        setCategories(loadedCategories.filter(Boolean));
       }
       isInitialLoad = false;
     });
 
     const unsubNotes = onSnapshot(notesRef, (snapshot) => {
       const loadedNotes = snapshot.docs.map(d => d.data()).sort((a, b) => a.order - b.order);
-      setNotes(loadedNotes);
+      setNotes(loadedNotes.filter(Boolean));
       setLoading(false);
     });
 
     const unsubLinks = onSnapshot(linksRef, (snapshot) => {
       const loadedLinks = snapshot.docs.map(d => d.data()).sort((a, b) => a.order - b.order);
-      setLinks(loadedLinks);
+      setLinks(loadedLinks.filter(Boolean));
     });
 
     return () => { unsubCategories(); unsubNotes(); unsubLinks(); };
@@ -421,8 +421,9 @@ export default function App() {
   };
 
   const openEditModal = (note) => {
+    if (!note) return;
     setEditingNote(note);
-    const initialBlocks = note.blocks || [{ id: generateId(), type: 'text', content: note.content || '', checked: false }];
+    const initialBlocks = Array.isArray(note.blocks) ? note.blocks : [{ id: generateId(), type: 'text', content: note.content || '', checked: false }];
     setFormData({ ...note, blocks: initialBlocks });
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
@@ -450,9 +451,9 @@ export default function App() {
   const toggleComplete = async (e, id) => {
     e.stopPropagation();
     if (!user) return;
-    const note = notes.find(n => n.id === id);
+    const note = notes.find(n => n && n.id === id);
     if (note) {
-      setNotes(notes.map(n => n.id === id ? { ...n, isCompleted: !n.isCompleted } : n));
+      setNotes(notes.map(n => n && n.id === id ? { ...n, isCompleted: !n.isCompleted } : n));
       await setDoc(getNoteDoc(id), { isCompleted: !note.isCompleted }, { merge: true });
     }
   };
@@ -460,10 +461,10 @@ export default function App() {
   const handleBoardBlockCheckToggle = async (e, noteId, blockId) => {
     e.stopPropagation();
     if (!user) return;
-    const note = notes.find(n => n.id === noteId);
-    if (note) {
-      const newBlocks = note.blocks.map(b => b.id === blockId ? { ...b, checked: !b.checked } : b);
-      setNotes(notes.map(n => n.id === noteId ? { ...n, blocks: newBlocks } : n));
+    const note = notes.find(n => n && n.id === noteId);
+    if (note && Array.isArray(note.blocks)) {
+      const newBlocks = note.blocks.map(b => b && b.id === blockId ? { ...b, checked: !b.checked } : b);
+      setNotes(notes.map(n => n && n.id === noteId ? { ...n, blocks: newBlocks } : n));
       await setDoc(getNoteDoc(noteId), { blocks: newBlocks }, { merge: true });
     }
   };
@@ -506,11 +507,11 @@ export default function App() {
 
     if (sourceCategoryId && sourceCategoryId !== targetCategoryId && user) {
       const sortedCategories = [...categories];
-      const srcIdx = sortedCategories.findIndex(c => c.id === sourceCategoryId);
+      const srcIdx = sortedCategories.findIndex(c => c && c.id === sourceCategoryId);
       if (srcIdx === -1) return;
 
       const [removed] = sortedCategories.splice(srcIdx, 1);
-      const targetIdxAfterRemove = sortedCategories.findIndex(c => c.id === targetCategoryId);
+      const targetIdxAfterRemove = sortedCategories.findIndex(c => c && c.id === targetCategoryId);
       
       if (targetIdxAfterRemove === -1) {
         sortedCategories.push(removed);
@@ -522,13 +523,13 @@ export default function App() {
       const updatedCategories = sortedCategories.map((c, index) => ({ ...c, order: (index + 1) * 1000 }));
       setCategories(updatedCategories);
       for (const c of updatedCategories) {
-        await setDoc(getCategoryDoc(c.id), { order: c.order }, { merge: true });
+        if (c && c.id) await setDoc(getCategoryDoc(c.id), { order: c.order }, { merge: true });
       }
       return;
     }
 
     if (!sourceNoteId || targetCategoryId === activeCategoryId || !user) return;
-    setNotes(notes.map(n => n.id === sourceNoteId ? { ...n, categoryId: targetCategoryId, order: Date.now() } : n));
+    setNotes(notes.map(n => n && n.id === sourceNoteId ? { ...n, categoryId: targetCategoryId, order: Date.now() } : n));
     await setDoc(getNoteDoc(sourceNoteId), { categoryId: targetCategoryId, order: Date.now() }, { merge: true });
   };
 
@@ -559,22 +560,24 @@ export default function App() {
     const sourceId = e.dataTransfer.getData('noteId');
     if (!sourceId || sourceId === targetId || !user) return;
     
-    const categoryNotes = notes.filter(n => n.categoryId === activeCategoryId).sort((a,b) => a.order - b.order);
-    const sourceIndex = categoryNotes.findIndex(n => n.id === sourceId);
+    const categoryNotes = notes.filter(n => n && n.categoryId === activeCategoryId).sort((a,b) => a.order - b.order);
+    const sourceIndex = categoryNotes.findIndex(n => n && n.id === sourceId);
     if (sourceIndex === -1) return;
     
     const newCategoryNotes = [...categoryNotes];
     const [removed] = newCategoryNotes.splice(sourceIndex, 1);
     
-    const targetIdxAfterRemove = newCategoryNotes.findIndex(n => n.id === targetId);
+    const targetIdxAfterRemove = newCategoryNotes.findIndex(n => n && n.id === targetId);
     if (targetIdxAfterRemove === -1) return;
     
     const insertIndex = indicator?.position === 'top' ? targetIdxAfterRemove : targetIdxAfterRemove + 1;
     newCategoryNotes.splice(insertIndex, 0, removed);
     
     const updatedNotes = newCategoryNotes.map((note, index) => ({ ...note, order: index * 1000 }));
-    setNotes(prev => [...prev.filter(n => n.categoryId !== activeCategoryId), ...updatedNotes]);
-    for (const note of updatedNotes) await setDoc(getNoteDoc(note.id), { order: note.order }, { merge: true });
+    setNotes(prev => [...prev.filter(n => n && n.categoryId !== activeCategoryId), ...updatedNotes]);
+    for (const note of updatedNotes) {
+      if (note && note.id) await setDoc(getNoteDoc(note.id), { order: note.order }, { merge: true });
+    }
   };
 
   const handleFreenotePointerDown = (e, note) => {
@@ -586,11 +589,11 @@ export default function App() {
     if (!canvasDragState) return;
     const dx = (e.clientX - canvasDragState.startX) / freenoteZoom;
     const dy = (e.clientY - canvasDragState.startY) / freenoteZoom;
-    setNotes(prev => prev.map(n => n.id === canvasDragState.id ? { ...n, x: canvasDragState.initialX + dx, y: canvasDragState.initialY + dy } : n));
+    setNotes(prev => prev.map(n => n && n.id === canvasDragState.id ? { ...n, x: canvasDragState.initialX + dx, y: canvasDragState.initialY + dy } : n));
   };
   const handleFreenotePointerUp = async (e) => {
     if (!canvasDragState) return;
-    const targetNote = notes.find(n => n.id === canvasDragState.id);
+    const targetNote = notes.find(n => n && n.id === canvasDragState.id);
     setCanvasDragState(null);
     if (targetNote && user) await setDoc(getNoteDoc(targetNote.id), { x: targetNote.x, y: targetNote.y }, { merge: true });
   };
@@ -630,13 +633,13 @@ export default function App() {
     const currentLinks = linkFilter === 'すべて' ? links : links.filter(l => (l.groupName || 'すべて') === linkFilter);
     const sortedCurrentLinks = currentLinks.sort((a,b) => a.order - b.order);
     
-    const sourceIdx = sortedCurrentLinks.findIndex(l => l.id === sourceId);
+    const sourceIdx = sortedCurrentLinks.findIndex(l => l && l.id === sourceId);
     if (sourceIdx === -1) return;
 
     const newLinks = [...sortedCurrentLinks];
     const [removed] = newLinks.splice(sourceIdx, 1);
     
-    const targetIdxAfterRemove = newLinks.findIndex(l => l.id === targetId);
+    const targetIdxAfterRemove = newLinks.findIndex(l => l && l.id === targetId);
     if (targetIdxAfterRemove === -1) {
       newLinks.push(removed);
     } else {
@@ -645,26 +648,15 @@ export default function App() {
     }
 
     const updatedLinks = newLinks.map((l, i) => ({ ...l, order: i * 1000 }));
-    setLinks(prev => [...prev.filter(l => !updatedLinks.find(ul => ul.id === l.id)), ...updatedLinks]);
+    setLinks(prev => [...prev.filter(l => l && !updatedLinks.find(ul => ul && ul.id === l.id)), ...updatedLinks]);
     
-    for (const l of updatedLinks) await setDoc(getLinkDoc(l.id), { order: l.order }, { merge: true });
+    for (const l of updatedLinks) {
+      if (l && l.id) await setDoc(getLinkDoc(l.id), { order: l.order }, { merge: true });
+    }
   };
   const handleLinkDragEnd = () => {
     setDraggedLinkId(null);
     setLinkDragOverIndicator(null);
-  };
-
-  const saveLink = async () => {
-    if (!user || !linkFormData.word || !linkFormData.url) return;
-    const id = linkFormData.id || generateId();
-    await setDoc(getLinkDoc(id), { ...linkFormData, id, order: linkFormData.order || Date.now() }, { merge: true });
-    setIsLinkModalOpen(false);
-  };
-
-  const deleteLink = async (id) => {
-    if (!user) return;
-    await deleteDoc(getLinkDoc(id));
-    setIsLinkModalOpen(false);
   };
 
   // 削除確認処理
@@ -689,12 +681,12 @@ export default function App() {
   const addBlock = (type) => {
     setFormData(prev => {
       const { id: targetId, cursorPosition } = activeBlockInfoRef.current;
-      const activeIdx = prev.blocks.findIndex(b => b.id === targetId);
+      const activeIdx = prev.blocks.findIndex(b => b && b.id === targetId);
 
-      if (activeIdx !== -1 && prev.blocks[activeIdx].type === 'text') {
+      if (activeIdx !== -1 && prev.blocks[activeIdx] && prev.blocks[activeIdx].type === 'text') {
         const targetBlock = prev.blocks[activeIdx];
-        const textBefore = targetBlock.content.substring(0, cursorPosition);
-        const textAfter = targetBlock.content.substring(cursorPosition);
+        const textBefore = (targetBlock.content || '').substring(0, cursorPosition);
+        const textAfter = (targetBlock.content || '').substring(cursorPosition);
 
         const newBlockId = generateId();
         const newTextId = generateId();
@@ -724,21 +716,20 @@ export default function App() {
     });
   };
 
-  const updateBlock = (blockId, updates) => setFormData(prev => ({ ...prev, blocks: prev.blocks.map(b => b.id === blockId ? { ...b, ...updates } : b) }));
-  const removeBlock = (blockId) => setFormData(prev => ({ ...prev, blocks: prev.blocks.filter(b => b.id !== blockId) }));
+  const updateBlock = (blockId, updates) => setFormData(prev => ({ ...prev, blocks: prev.blocks.map(b => b && b.id === blockId ? { ...b, ...updates } : b) }));
+  const removeBlock = (blockId) => setFormData(prev => ({ ...prev, blocks: prev.blocks.filter(b => b && b.id !== blockId) }));
 
   // インラインテキスト装飾の適用ヘルパー
   const applyTextStyle = (styleType, colorValue = null) => {
-    // 最後にフォーカスされていた情報を最優先で参照
     const targetId = activeBlockId || activeBlockInfoRef.current.id;
     if (!targetId) return;
 
     const textarea = document.getElementById(`block-input-${targetId}`);
     if (!textarea) return;
 
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const text = textarea.value;
+    const start = textarea.selectionStart || 0;
+    const end = textarea.selectionEnd || 0;
+    const text = textarea.value || '';
     const selectedText = text.substring(start, end);
 
     let replacement = '';
@@ -753,7 +744,7 @@ export default function App() {
     const newValue = text.substring(0, start) + replacement + text.substring(end);
     updateBlock(targetId, { content: newValue });
 
-    // 装飾を適用した瞬間、生テキストに留まらず即プレビュー表示（非アクティブ化）に切り替える
+    // 装飾を適用した瞬間、生テキストに留まらず即プレビュー表示に切り替える
     setTimeout(() => {
       setActiveBlockId(null);
     }, 50);
@@ -762,22 +753,24 @@ export default function App() {
   const handleKeyDown = (e, index, blockType) => {
     if (e.nativeEvent.isComposing) return;
     
-    if (e.key === 'Backspace' && formData.blocks[index].content === '') {
+    if (e.key === 'Backspace' && formData.blocks[index] && formData.blocks[index].content === '') {
       e.preventDefault();
       if (formData.blocks.length > 1) {
         removeBlock(formData.blocks[index].id);
         if (index > 0) {
           const prevBlock = formData.blocks[index - 1];
-          setTimeout(() => {
-            const prevInput = document.getElementById(`block-input-${prevBlock.id}`);
-            if (prevInput) {
-              prevInput.focus();
-              const len = prevInput.value.length;
-              prevInput.setSelectionRange(len, len);
-            }
-          }, 10);
-          activeBlockInfoRef.current = { id: prevBlock.id, cursorPosition: prevBlock.content.length };
-          setActiveBlockId(prevBlock.id);
+          if (prevBlock) {
+            setTimeout(() => {
+              const prevInput = document.getElementById(`block-input-${prevBlock.id}`);
+              if (prevInput) {
+                prevInput.focus();
+                const len = prevInput.value.length;
+                prevInput.setSelectionRange(len, len);
+              }
+            }, 10);
+            activeBlockInfoRef.current = { id: prevBlock.id, cursorPosition: (prevBlock.content || '').length };
+            setActiveBlockId(prevBlock.id);
+          }
         }
       }
       return;
@@ -802,12 +795,12 @@ export default function App() {
   const insertContentIntoText = (contentData, type) => {
     setFormData(prev => {
       const { id: targetId, cursorPosition } = activeBlockInfoRef.current;
-      const activeIdx = prev.blocks.findIndex(b => b.id === targetId);
+      const activeIdx = prev.blocks.findIndex(b => b && b.id === targetId);
 
-      if (activeIdx !== -1 && prev.blocks[activeIdx].type === 'text') {
+      if (activeIdx !== -1 && prev.blocks[activeIdx] && prev.blocks[activeIdx].type === 'text') {
         const targetBlock = prev.blocks[activeIdx];
-        const textBefore = targetBlock.content.substring(0, cursorPosition);
-        const textAfter = targetBlock.content.substring(cursorPosition);
+        const textBefore = (targetBlock.content || '').substring(0, cursorPosition);
+        const textAfter = (targetBlock.content || '').substring(cursorPosition);
 
         const newContentId = generateId();
         const newTextId = generateId();
@@ -863,7 +856,7 @@ export default function App() {
     if (!clipboardData) return;
 
     const files = Array.from(clipboardData.files || []);
-    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    const imageFiles = files.filter(f => f && f.type && f.type.startsWith('image/'));
     
     if (imageFiles.length > 0) {
       e.preventDefault();
@@ -878,7 +871,7 @@ export default function App() {
     }
 
     const items = Array.from(clipboardData.items || []);
-    const imageItems = items.filter(i => i.type.startsWith('image/'));
+    const imageItems = items.filter(i => i && i.type && i.type.startsWith('image/'));
     if (imageItems.length > 0) {
       const file = imageItems[0].getAsFile();
       if (file) {
@@ -901,7 +894,7 @@ export default function App() {
       const imgs = doc.querySelectorAll('img');
       if (imgs.length > 0) {
         const src = imgs[0].src;
-        if (src.startsWith('data:image/')) {
+        if (src && src.startsWith('data:image/')) {
           e.preventDefault();
           insertContentIntoText(src, 'image');
           return;
@@ -957,12 +950,23 @@ export default function App() {
     );
   }
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#666666]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#00CC5B] mb-4" />
+        <p className="font-medium text-[16px]">同期中...</p>
+      </div>
+    );
+  }
+
+  // --- activeNotes の定義ロジックを正しい位置（レンダリングの直前）に復旧・追加 ---
   let activeNotes = [];
   if (activeCategoryId === 'all_list') {
-    let filtered = notes.filter(n => showCompleted ? true : !n.isCompleted);
+    let filtered = notes.filter(n => n && (showCompleted ? true : !n.isCompleted));
     const categoryOrderMap = categories.reduce((acc, cat) => { if (cat && cat.id) acc[cat.id] = cat.order; return acc; }, {});
     
     filtered.sort((a, b) => {
+      if (!a || !b) return 0;
       const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
       const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
       const orderA = a.categoryId === 'freenote' ? -1 : (categoryOrderMap[a.categoryId] !== undefined ? categoryOrderMap[a.categoryId] : Infinity);
@@ -981,25 +985,13 @@ export default function App() {
     });
     activeNotes = filtered;
   } else if (activeCategoryId === 'deadline') {
-    activeNotes = notes.filter(n => n.dueDate && (showCompleted ? true : !n.isCompleted)).sort((a,b) => new Date(a.dueDate) - new Date(b.dueDate));
+    activeNotes = notes.filter(n => n && n.dueDate && (showCompleted ? true : !n.isCompleted)).sort((a, b) => {
+      if (!a || !b) return 0;
+      return new Date(a.dueDate) - new Date(b.dueDate);
+    });
   } else if (activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook') {
-    activeNotes = notes.filter(n => n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted));
+    activeNotes = notes.filter(n => n && n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted));
   }
-
-  const dueDateParts = getDueDateParts(formData.dueDate);
-  const handleDateChange = (type, val) => {
-    const newDateStr = type === 'date' ? val : (dueDateParts.date || new Date().toISOString().split('T')[0]);
-    const newHour = type === 'hour' ? val : dueDateParts.hour;
-    const newMinute = '00';
-    if (newDateStr) {
-      const dt = new Date(`${newDateStr}T${newHour}:${newMinute}:00`);
-      if (!isNaN(dt.getTime())) setFormData({...formData, dueDate: dt.toISOString()});
-    }
-  };
-
-  const linkGroups = ['すべて', ...Array.from(new Set((links || []).map(l => l?.groupName).filter(Boolean)))];
-  if (!linkGroups.includes('一般')) linkGroups.push('一般');
-  const filteredLinks = linkFilter === 'すべて' ? (links || []) : (links || []).filter(l => l && (l.groupName || '一般') === linkFilter);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F7F9F8] text-[#333333]">
@@ -1059,7 +1051,7 @@ export default function App() {
               </div>
             </div>
 
-            {categories.map(category => (
+            {categories.filter(Boolean).map(category => (
               <div
                 key={category.id}
                 draggable={isCategoryEditMode}
@@ -1157,11 +1149,13 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {activeNotes.map((note, index) => {
+                      {activeNotes.filter(Boolean).map((note, index) => {
                         const catName = note.categoryId === 'freenote' ? 'フリーノート' : categories.find(c => c && c.id === note.categoryId)?.name || '不明';
                         const dueDateInfo = formatDueDate(note.dueDate);
-                        // 本文からテキスト情報だけを抽出し、改行や余分な空白を取り除いて1行にする
-                        const plainText = note.blocks?.filter(b => b && (b.type === 'text' || b.type === 'list' || b.type === 'checkbox')).map(b => b.content).join(' ').replace(/\s+/g, ' ').trim();
+                        // 本文からテキスト情報だけを抽出し、改行や余分な空白を取り除いて1行にする (安全に配列判定)
+                        const plainText = Array.isArray(note.blocks)
+                          ? note.blocks.filter(b => b && (b.type === 'text' || b.type === 'list' || b.type === 'checkbox')).map(b => b.content || '').join(' ').replace(/\s+/g, ' ').trim()
+                          : '';
                         
                         return (
                           <tr key={note.id} onClick={() => openEditModal(note)} className={`cursor-pointer transition-colors group ${index % 2 === 0 ? 'bg-[#FFFFFF]' : 'bg-[#F7F9F8]/50'} hover:bg-[#E0FFEE]/30`}>
@@ -1203,7 +1197,7 @@ export default function App() {
                 <div style={{ width: 5000 * freenoteZoom, height: 5000 * freenoteZoom, backgroundImage: 'radial-gradient(#D7DCD9 2px, transparent 2px)', backgroundSize: `${30 * freenoteZoom}px ${30 * freenoteZoom}px` }} className="relative pointer-events-none origin-top-left">
                   <div className="pointer-events-auto" style={{ transform: `scale(${freenoteZoom})`, transformOrigin: '0 0', width: 5000, height: 5000 }}>
                     {notes.filter(n => n && n.categoryId === 'freenote').map(note => {
-                      const firstImageBlock = note.blocks?.find(b => b && b.type === 'image');
+                      const firstImageBlock = Array.isArray(note.blocks) ? note.blocks.find(b => b && b.type === 'image') : null;
                       const dueDateInfo = formatDueDate(note.dueDate);
                       return (
                         <div 
@@ -1232,25 +1226,28 @@ export default function App() {
                             </div>
                             <div className="max-h-[300px] overflow-hidden relative no-drag text-[12px]">
                               <div className="space-y-0 pb-6">
-                                {note.blocks?.slice(0, 20).map(block => (
-                                  <div key={block.id} className="py-0">
-                                    {block.type === 'text' && <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666]" />}
-                                    {block.type === 'list' && (
-                                      <div className="flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] text-[#666666]">
-                                        <span className="font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
-                                      </div>
-                                    )}
-                                    {block.type === 'checkbox' && (
-                                      <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
-                                        {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
-                                        <span className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6]`}>
-                                          <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} />
-                                        </span>
-                                      </div>
-                                    )}
-                                    {block.type === 'image' && !firstImageBlock && <div className="text-[12px] text-[#666666] flex items-center gap-[4px] my-1"><ImageIcon className="w-3 h-3"/> 画像</div>}
-                                  </div>
-                                ))}
+                                {Array.isArray(note.blocks) && note.blocks.slice(0, 20).map(block => {
+                                  if (!block) return null;
+                                  return (
+                                    <div key={block.id} className="py-0">
+                                      {block.type === 'text' && <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666]" />}
+                                      {block.type === 'list' && (
+                                        <div className="flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] text-[#666666]">
+                                          <span className="font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
+                                        </div>
+                                      )}
+                                      {block.type === 'checkbox' && (
+                                        <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
+                                          {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
+                                          <span className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6]`}>
+                                            <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} />
+                                          </span>
+                                        </div>
+                                      )}
+                                      {block.type === 'image' && !firstImageBlock && <div className="text-[12px] text-[#666666] flex items-center gap-[4px] my-1"><ImageIcon className="w-3 h-3"/> 画像</div>}
+                                    </div>
+                                  );
+                                })}
                               </div>
                               <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-[#FFFFFF] to-transparent pointer-events-none"></div>
                             </div>
@@ -1289,36 +1286,39 @@ export default function App() {
 
               <div className="flex-1 overflow-y-auto bg-white rounded-xl shadow-sm border border-[#D7DCD9] p-2 flex flex-col gap-1">
                 {filteredLinks.length === 0 && <div className="p-8 text-center text-[#666666] font-medium">表示するリンクがありません。</div>}
-                {filteredLinks.map(link => (
-                  <div 
-                    key={link.id} 
-                    draggable 
-                    onDragStart={(e) => handleLinkDragStart(e, link.id)}
-                    onDragEnd={handleLinkDragEnd}
-                    onDragOver={(e) => handleLinkDragOver(e, link.id)}
-                    onDragLeave={() => setLinkDragOverIndicator(null)}
-                    onDrop={(e) => handleLinkDrop(e, link.id)}
-                    className={`px-3 py-2 flex items-center justify-between gap-4 transition-colors cursor-grab active:cursor-grabbing rounded-lg relative hover:bg-[#F7F9F8]`}
-                  >
-                    {linkDragOverIndicator?.id === link.id && linkDragOverIndicator?.position === 'top' && (
-                      <div className="absolute top-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mt-[2px]"></div>
-                    )}
-                    {linkDragOverIndicator?.id === link.id && linkDragOverIndicator?.position === 'bottom' && (
-                      <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mb-[2px]"></div>
-                    )}
-                    <div className="flex items-center gap-3 flex-1 overflow-hidden">
-                      <GripVertical className="w-4 h-4 text-[#C4C4C4] shrink-0" />
-                      <div className="font-bold text-[#333333] text-[16px] truncate">{link.word}</div>
-                      <div className="text-[12px] text-[#00CC5B] bg-[#E0FFEE] px-2 py-0.5 rounded shrink-0">{link.groupName || '一般'}</div>
+                {filteredLinks.map(link => {
+                  if (!link) return null;
+                  return (
+                    <div 
+                      key={link.id} 
+                      draggable 
+                      onDragStart={(e) => handleLinkDragStart(e, link.id)}
+                      onDragEnd={handleLinkDragEnd}
+                      onDragOver={(e) => handleLinkDragOver(e, link.id)}
+                      onDragLeave={() => setLinkDragOverIndicator(null)}
+                      onDrop={(e) => handleLinkDrop(e, link.id)}
+                      className={`px-3 py-2 flex items-center justify-between gap-4 transition-colors cursor-grab active:cursor-grabbing rounded-lg relative hover:bg-[#F7F9F8]`}
+                    >
+                      {linkDragOverIndicator?.id === link.id && linkDragOverIndicator?.position === 'top' && (
+                        <div className="absolute top-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mt-[2px]"></div>
+                      )}
+                      {linkDragOverIndicator?.id === link.id && linkDragOverIndicator?.position === 'bottom' && (
+                        <div className="absolute bottom-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mb-[2px]"></div>
+                      )}
+                      <div className="flex items-center gap-3 flex-1 overflow-hidden">
+                        <GripVertical className="w-4 h-4 text-[#C4C4C4] shrink-0" />
+                        <div className="font-bold text-[#333333] text-[16px] truncate">{link.word}</div>
+                        <div className="text-[12px] text-[#00CC5B] bg-[#E0FFEE] px-2 py-0.5 rounded shrink-0">{link.groupName || '一般'}</div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <a href={link.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 bg-[#F7F9F8] hover:bg-[#E0FFEE] hover:text-[#00CC5B] text-[#666666] rounded-md transition-colors text-[12px] font-bold">
+                          開く <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                        <button onClick={() => { setLinkFormData(link); setIsLinkModalOpen(true); }} className="p-1.5 text-[#C4C4C4] hover:text-[#00CC5B] transition-colors"><Edit2 className="w-4 h-4"/></button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <a href={link.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 bg-[#F7F9F8] hover:bg-[#E0FFEE] hover:text-[#00CC5B] text-[#666666] rounded-md transition-colors text-[12px] font-bold">
-                        開く <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
-                      <button onClick={() => { setLinkFormData(link); setIsLinkModalOpen(true); }} className="p-1.5 text-[#C4C4C4] hover:text-[#00CC5B] transition-colors"><Edit2 className="w-4 h-4"/></button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="absolute bottom-6 right-6">
                 <button onClick={() => { setLinkFormData({ id: '', word: '', url: '', groupName: linkFilter === 'すべて' ? '一般' : linkFilter }); setIsLinkModalOpen(true); }} className="flex items-center justify-center bg-[#00CC5B] hover:bg-[#00AC4C] text-[#FFFFFF] w-14 h-14 rounded-full transition-all shadow-lg hover:shadow-xl hover:-translate-y-1" title="リンクを追加">
@@ -1337,8 +1337,8 @@ export default function App() {
                 </div>
               ) : (
                 <div className="columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 pb-10">
-                  {activeNotes.map((note) => {
-                    const firstImageBlock = note.blocks?.find(b => b && b.type === 'image');
+                  {activeNotes.filter(Boolean).map((note) => {
+                    const firstImageBlock = Array.isArray(note.blocks) ? note.blocks.find(b => b && b.type === 'image') : null;
                     const dueDateInfo = formatDueDate(note.dueDate);
                     return (
                       <div
@@ -1373,12 +1373,12 @@ export default function App() {
                             {note.title}
                           </h3>
                           <button onClick={(e) => toggleComplete(e, note.id)} className={`absolute top-2 right-2 sm:top-3 sm:right-3 transition-colors p-0.5 sm:p-1 rounded-full shadow-sm border z-10 ${note.isCompleted ? 'text-[#00CC5B] bg-[#E0FFEE] border-[#00CC5B]' : 'text-[#C4C4C4] bg-[#FFFFFF] border-[#D7DCD9]'}`}>
-                            {note.isCompleted ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : <Circle className="w-4 h-4 sm:w-5 sm:h-5 hover:text-[#00CC5B]" />}
+                            {note.isCompleted ? <CheckCircle2 className="w-4 h-4 sm:w-5 h-5" /> : <Circle className="w-4 h-4 sm:w-5 h-5 hover:text-[#00CC5B]" />}
                           </button>
                         </div>
                         <div className="relative overflow-hidden max-h-[300px] rounded-b-lg">
                           <div className="space-y-0 pb-6">
-                            {note.blocks?.map(block => {
+                            {Array.isArray(note.blocks) && note.blocks.map(block => {
                               if (!block) return null;
                               return (
                                 <div key={block.id} className="py-0">
@@ -1442,7 +1442,7 @@ export default function App() {
                 {/* ボード名選択（コンパクト化） */}
                 <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
                   <option value="freenote">フリーノート</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {categories.map(c => c && <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
 
@@ -1534,104 +1534,107 @@ export default function App() {
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-4 sm:pt-6 pb-[50vh] custom-scrollbar flex flex-col relative bg-[#FFFFFF] sm:rounded-b-2xl">
               <div className="flex-1 relative">
                 <div className="space-y-0">
-                  {formData.blocks?.map((block, index) => (
-                    <div key={block.id} className="flex items-start group relative">
-                      <div className={`flex justify-center shrink-0 ${block.type === 'text' ? 'w-1 sm:w-0' : 'w-6 sm:w-7 pt-[6px]'}`}> 
-                        {block.type === 'list' && <div className="text-[#666666] font-bold text-[18px]">•</div>}
-                        {block.type === 'checkbox' && (
-                          <div className="cursor-pointer" onClick={() => updateBlock(block.id, { checked: !block.checked })}>
-                            {block.checked ? <CheckSquare className="w-5 h-5 text-[#00CC5B]" /> : <Square className="w-5 h-5 text-[#C4C4C4] hover:text-[#00CC5B]" />}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex-1 pl-1 pr-6 sm:pr-8">
-                        {block.type === 'image' ? (
-                          <div className="relative inline-block my-2 w-full">
-                            <img src={block.content} alt="添付画像" className="max-w-full max-h-[400px] object-contain rounded-lg border border-[#D7DCD9]" />
-                            <button 
-                              type="button" 
-                              onClick={(e) => { e.stopPropagation(); removeBlock(block.id); }} 
-                              className="absolute top-2 right-2 p-1.5 bg-[#FFFFFF]/80 hover:bg-[#FFFFFF] text-[#ED1C24] rounded-full shadow-sm transition-all z-20 backdrop-blur-sm border border-[#D7DCD9]/50" 
-                              title="画像を削除"
-                            >
-                              <X className="w-5 h-5" />
-                            </button>
-                          </div>
-                        ) : (
-                          /* フォーカス状態に応じて textarea と FormattedText プレビューを美しく切り替え */
-                          activeBlockId === block.id ? (
-                            <textarea
-                              id={`block-input-${block.id}`}
-                              value={block.content}
-                              onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); saveCursorPosition(e, block.id); }}
-                              onKeyDown={(e) => { handleKeyDown(e, index, block.type); saveCursorPosition(e, block.id); }}
-                              onKeyUp={(e) => saveCursorPosition(e, block.id)}
-                              onClick={(e) => saveCursorPosition(e, block.id)}
-                              onFocus={(e) => saveCursorPosition(e, block.id)}
-                              onBlur={(e) => {
-                                setTimeout(() => {
-                                  // フォーカスの完全消失チェック
-                                  if (document.activeElement.id !== `block-input-${block.id}`) {
-                                    // カラーパレットやツールバーの操作時はアクティブ解除を抑止
-                                    if (!document.activeElement.closest('.Palette')) {
-                                      setActiveBlockId(null);
-                                    }
-                                  }
-                                }, 150);
-                              }}
-                              onPaste={handlePaste}
-                              className={`w-full bg-transparent resize-none outline-none py-0.5 m-0 font-medium leading-[1.6] overflow-hidden min-h-[28px]
-                                ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'} text-[13px] sm:text-[14px]`}
-                              rows={1}
-                              placeholder={block.type === 'text' ? (index === 0 ? "ここからメモを入力..." : "") : "項目を入力..."}
-                              autoFocus
-                            />
-                          ) : (
-                            <div 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveBlockId(block.id);
-                                setTimeout(() => {
-                                  const el = document.getElementById(`block-input-${block.id}`);
-                                  if (el) {
-                                    el.focus();
-                                    handleTextareaResize({ target: el });
-                                  }
-                                }, 50);
-                              }}
-                              className="w-full min-h-[28px] py-0.5 cursor-text select-text"
-                            >
-                              {block.content ? (
-                                <FormattedText 
-                                  text={block.content} 
-                                  links={links} 
-                                  activeCategoryId={formData.categoryId} 
-                                  className={`whitespace-pre-wrap font-medium leading-[1.6] text-[13px] sm:text-[14px] ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'}`}
-                                />
-                              ) : (
-                                <span className="text-[#C4C4C4] select-none text-[13px] sm:text-[14px] italic">
-                                  {block.type === 'text' ? (index === 0 ? "ここからメモを入力..." : "テキストを入力...") : "項目を入力..."}
-                                </span>
-                              )}
+                  {Array.isArray(formData.blocks) && formData.blocks.map((block, index) => {
+                    if (!block) return null;
+                    return (
+                      <div key={block.id} className="flex items-start group relative">
+                        <div className={`flex justify-center shrink-0 ${block.type === 'text' ? 'w-1 sm:w-0' : 'w-6 sm:w-7 pt-[6px]'}`}> 
+                          {block.type === 'list' && <div className="text-[#666666] font-bold text-[18px]">•</div>}
+                          {block.type === 'checkbox' && (
+                            <div className="cursor-pointer" onClick={() => updateBlock(block.id, { checked: !block.checked })}>
+                              {block.checked ? <CheckSquare className="w-5 h-5 text-[#00CC5B]" /> : <Square className="w-5 h-5 text-[#C4C4C4] hover:text-[#00CC5B]" />}
                             </div>
-                          )
+                          )}
+                        </div>
+
+                        <div className="flex-1 pl-1 pr-6 sm:pr-8">
+                          {block.type === 'image' ? (
+                            <div className="relative inline-block my-2 w-full">
+                              <img src={block.content} alt="添付画像" className="max-w-full max-h-[400px] object-contain rounded-lg border border-[#D7DCD9]" />
+                              <button 
+                                type="button" 
+                                onClick={(e) => { e.stopPropagation(); removeBlock(block.id); }} 
+                                className="absolute top-2 right-2 p-1.5 bg-[#FFFFFF]/80 hover:bg-[#FFFFFF] text-[#ED1C24] rounded-full shadow-sm transition-all z-20 backdrop-blur-sm border border-[#D7DCD9]/50" 
+                                title="画像を削除"
+                              >
+                                <X className="w-5 h-5" />
+                              </button>
+                            </div>
+                          ) : (
+                            /* フォーカス状態に応じて textarea と FormattedText プレビューを美しく切り替え */
+                            activeBlockId === block.id ? (
+                              <textarea
+                                id={`block-input-${block.id}`}
+                                value={block.content}
+                                onChange={(e) => { handleTextareaResize(e); updateBlock(block.id, { content: e.target.value }); saveCursorPosition(e, block.id); }}
+                                onKeyDown={(e) => { handleKeyDown(e, index, block.type); saveCursorPosition(e, block.id); }}
+                                onKeyUp={(e) => saveCursorPosition(e, block.id)}
+                                onClick={(e) => saveCursorPosition(e, block.id)}
+                                onFocus={(e) => saveCursorPosition(e, block.id)}
+                                onBlur={(e) => {
+                                  setTimeout(() => {
+                                    // フォーカスの完全消失チェック
+                                    if (document.activeElement.id !== `block-input-${block.id}`) {
+                                      // カラーパレットやツールバーの操作時はアクティブ解除を抑止
+                                      if (!document.activeElement.closest('.Palette')) {
+                                        setActiveBlockId(null);
+                                      }
+                                    }
+                                  }, 150);
+                                }}
+                                onPaste={handlePaste}
+                                className={`w-full bg-transparent resize-none outline-none py-0.5 m-0 font-medium leading-[1.6] overflow-hidden min-h-[28px]
+                                  ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'} text-[13px] sm:text-[14px]`}
+                                rows={1}
+                                placeholder={block.type === 'text' ? (index === 0 ? "ここからメモを入力..." : "") : "項目を入力..."}
+                                autoFocus
+                              />
+                            ) : (
+                              <div 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveBlockId(block.id);
+                                  setTimeout(() => {
+                                    const el = document.getElementById(`block-input-${block.id}`);
+                                    if (el) {
+                                      el.focus();
+                                      handleTextareaResize({ target: el });
+                                    }
+                                  }, 50);
+                                }}
+                                className="w-full min-h-[28px] py-0.5 cursor-text select-text"
+                              >
+                                {block.content ? (
+                                  <FormattedText 
+                                    text={block.content} 
+                                    links={links} 
+                                    activeCategoryId={formData.categoryId} 
+                                    className={`whitespace-pre-wrap font-medium leading-[1.6] text-[13px] sm:text-[14px] ${block.type === 'checkbox' && block.checked ? 'text-[#666666] line-through' : 'text-[#333333]'}`}
+                                  />
+                                ) : (
+                                  <span className="text-[#C4C4C4] select-none text-[13px] sm:text-[14px] italic">
+                                    {block.type === 'text' ? (index === 0 ? "ここからメモを入力..." : "テキストを入力...") : "項目を入力..."}
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          )}
+                        </div>
+                        
+                        {block.type !== 'image' && (
+                          <button 
+                            type="button" 
+                            onMouseDown={(e) => e.preventDefault()} 
+                            onClick={() => removeBlock(block.id)} 
+                            className="absolute right-0 top-1 opacity-40 sm:opacity-0 sm:group-hover:opacity-100 p-1 text-[#C4C4C4] hover:text-[#ED1C24] hover:bg-[#F7F9F8] rounded transition-all z-10" 
+                            title="この行を削除"
+                          >
+                            <X className="w-4 h-4 sm:w-5 h-5" />
+                          </button>
                         )}
                       </div>
-                      
-                      {block.type !== 'image' && (
-                        <button 
-                          type="button" 
-                          onMouseDown={(e) => e.preventDefault()} 
-                          onClick={() => removeBlock(block.id)} 
-                          className="absolute right-0 top-1 opacity-40 sm:opacity-0 sm:group-hover:opacity-100 p-1 text-[#C4C4C4] hover:text-[#ED1C24] hover:bg-[#F7F9F8] rounded transition-all z-10" 
-                          title="この行を削除"
-                        >
-                          <X className="w-4 h-4 sm:w-5 h-5" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
