@@ -8,7 +8,6 @@ import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'fi
 
 let firebaseConfig = {
   apiKey: "AIzaSyCqTZxvNFGf0O4_DDa7JQ45Zd8hxYKqYHY",
-  text: "かんばんノート",
   authDomain: "kanban-cloud-app.firebaseapp.com",
   projectId: "kanban-cloud-app",
   storageBucket: "kanban-cloud-app.firebasestorage.app",
@@ -17,8 +16,8 @@ let firebaseConfig = {
 };
 
 try {
-  if (typeof __text_config !== 'undefined') {
-    firebaseConfig = JSON.parse(__text_config);
+  if (typeof __firebase_config !== 'undefined') {
+    firebaseConfig = JSON.parse(__firebase_config);
   }
 } catch (e) {
   console.error("Firebase config parsing error", e);
@@ -1392,7 +1391,7 @@ export default function App() {
                                   {block.type === 'checkbox' && (
                                     <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
                                       {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
-                                      <span className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6]`}>
+                                      <span className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#333333]'} leading-[1.6]`}>
                                         <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} />
                                       </span>
                                     </div>
