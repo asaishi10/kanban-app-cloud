@@ -255,10 +255,8 @@ export default function App() {
   const [activeBlockId, setActiveBlockId] = useState(null);
   const activeBlockInfoRef = useRef({ id: null, cursorPosition: 0 });
 
-  // 追加メニュー用 State
-  const [showToolMenu, setShowToolMenu] = useState(false);
-  // カラーパレットメニュー
-  const [showColorMenu, setShowColorMenu] = useState(false);
+  // ★ ツールバーの開閉管理State (デフォルトで開く)
+  const [isToolbarOpen, setIsToolbarOpen] = useState(true);
 
   // リンク集用 State
   const [linkFilter, setLinkFilter] = useState('すべて');
@@ -416,7 +414,6 @@ export default function App() {
     setFormData({ title: '', categoryId: initialCategory, blocks: [{ id: generateId(), type: 'text', content: '', checked: false }], dueDate: '' });
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
-    setShowToolMenu(false);
     setIsModalOpen(true);
   };
 
@@ -426,7 +423,6 @@ export default function App() {
     setFormData({ ...note, blocks: initialBlocks });
     activeBlockInfoRef.current = { id: null, cursorPosition: 0 };
     setActiveBlockId(null);
-    setShowToolMenu(false);
     setIsModalOpen(true);
   };
 
@@ -730,7 +726,8 @@ export default function App() {
 
   // インラインテキスト装飾の適用ヘルパー
   const applyTextStyle = (styleType, colorValue = null) => {
-    const { id: targetId } = activeBlockInfoRef.current;
+    // 最後にフォーカスされていた情報を最優先で参照
+    const targetId = activeBlockId || activeBlockInfoRef.current.id;
     if (!targetId) return;
 
     const textarea = document.getElementById(`block-input-${targetId}`);
@@ -753,12 +750,9 @@ export default function App() {
     const newValue = text.substring(0, start) + replacement + text.substring(end);
     updateBlock(targetId, { content: newValue });
 
-    // カーソル位置を再調整してフォーカスをあてる
+    // ★ 改善点②: 装飾を適用した瞬間、生テキストに留まらず即プレビュー表示（非アクティブ化）に切り替える
     setTimeout(() => {
-      textarea.focus();
-      const newCursorPos = start + replacement.length;
-      textarea.setSelectionRange(newCursorPos, newCursorPos);
-      activeBlockInfoRef.current = { id: targetId, cursorPosition: newCursorPos };
+      setActiveBlockId(null);
     }, 50);
   };
 
@@ -1349,7 +1343,7 @@ export default function App() {
                         key={note.id}
                         draggable={activeCategoryId !== 'deadline'}
                         onDragStart={(e) => handleDragStart(e, note.id)}
-                        onDragEnd={(e) => handleDragEnd(e, note.id)}
+                        onDragEnd={handleDragEnd(e, note.id)}
                         onDragOver={(e) => handleDragOverNote(e, note.id)}
                         onDragLeave={handleDragLeaveNote}
                         onDrop={(e) => handleDropOnNote(e, note.id)}
@@ -1418,11 +1412,12 @@ export default function App() {
         <div className="fixed inset-0 bg-[#333333]/60 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 z-50">
           <div className="bg-[#FFFFFF] sm:rounded-2xl shadow-2xl w-full max-w-2xl h-full sm:h-[95vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
             
+            {/* ★ 改善点①: すっきり1行のヘッダー */}
             <div className="px-3 sm:px-4 py-2 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex items-center justify-between gap-1 sm:gap-2 z-20 relative">
-              {/* スクロール可能な左・中央エリア */}
               <div className="flex-1 flex items-center gap-1 sm:gap-2 overflow-x-auto custom-scrollbar pb-1 -mb-1">
                 <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
                 
+                {/* 期限（年を省略した MM/DD 表示） */}
                 <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-1.5 sm:px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0 hover:border-[#C4C4C4] h-8">
                   <Calendar className="w-3.5 h-3.5 text-[#666666] mr-1 hidden sm:block" />
                   <div className="relative flex items-center h-full">
@@ -1438,88 +1433,97 @@ export default function App() {
                   <span className="text-[#666666] text-[11px] sm:text-[12px] font-medium ml-0.5">時</span>
                 </div>
 
+                {/* ボード名選択（コンパクト化） */}
                 <select value={formData.categoryId} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
                   <option value="freenote">フリーノート</option>
                   {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
 
-              {/* 固定の右側エリア */}
-              <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0 pl-1 sm:pl-2 ml-auto">
-                {/* ★ インライン装飾ツールバー（行選択時のみ機能。onMouseDownによるフォーカス剥ぎ取り防止処理済み） */}
-                {activeBlockId && (
-                  <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg p-0.5 h-8 gap-0.5 sm:gap-1 shrink-0">
-                    <button 
-                      type="button" 
-                      onMouseDown={(e) => e.preventDefault()} 
-                      onClick={() => applyTextStyle('bold')} 
-                      className="p-1 text-[#666666] hover:text-[#00CC5B] hover:bg-[#F7F9F8] rounded transition-colors" 
-                      title="太字にする (B)"
-                    >
-                      <Bold className="w-3.5 h-3.5 sm:w-4 sm:h-4"/>
-                    </button>
-                    <button 
-                      type="button" 
-                      onMouseDown={(e) => e.preventDefault()} 
-                      onClick={() => applyTextStyle('underline')} 
-                      className="p-1 text-[#666666] hover:text-[#00CC5B] hover:bg-[#F7F9F8] rounded transition-colors" 
-                      title="下線を引く (U)"
-                    >
-                      <Underline className="w-3.5 h-3.5 sm:w-4 sm:h-4"/>
-                    </button>
-                    
-                    {/* カラーパレット */}
-                    <div className="relative Palette">
-                      <button 
-                        type="button" 
-                        onMouseDown={(e) => e.preventDefault()} 
-                        onClick={() => setShowColorMenu(!showColorMenu)} 
-                        className={`p-1 rounded transition-colors ${showColorMenu ? 'text-[#00CC5B] bg-[#E0FFEE]' : 'text-[#666666] hover:text-[#00CC5B] hover:bg-[#F7F9F8]'}`} 
-                        title="文字の色を変える"
-                      >
-                        <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                      </button>
-                      {showColorMenu && (
-                        <div className="absolute right-0 top-full mt-1 bg-[#FFFFFF] border border-[#D7DCD9] shadow-xl rounded-xl p-1.5 flex gap-1.5 z-50 animate-in fade-in zoom-in duration-200 Palette">
-                          {['#ED1C24', '#005BFF', '#00CC5B', '#FF8C00', '#333333'].map(color => (
-                            <button 
-                              key={color} 
-                              type="button" 
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => { applyTextStyle('color', color); setShowColorMenu(false); }} 
-                              className="w-4 h-4 rounded-full border border-gray-200 hover:scale-125 transition-transform" 
-                              style={{ backgroundColor: color }} 
-                              title={color}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* 追加ツール */}
-                <div className="relative">
-                  <button type="button" onClick={() => setShowToolMenu(!showToolMenu)} className={`flex items-center justify-center gap-1 px-2 h-8 border rounded-lg transition-colors text-[12px] font-bold ${showToolMenu ? 'bg-[#E0FFEE] text-[#00CC5B] border-[#00CC5B]' : 'bg-[#FFFFFF] text-[#666666] border-[#D7DCD9] hover:border-[#C4C4C4]'}`}>
-                    <Plus className="w-4 h-4" /> <span className="hidden lg:inline">追加</span>
-                  </button>
-                  {showToolMenu && (
-                    <div className="absolute right-0 top-full mt-2 bg-[#FFFFFF] border border-[#D7DCD9] shadow-xl rounded-xl p-1 flex gap-1 z-50 animate-in fade-in zoom-in duration-200">
-                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { addBlock('text'); setShowToolMenu(false); }} title="テキストを追加" className="p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><AlignLeft className="w-4 h-4" /></button>
-                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { addBlock('list'); setShowToolMenu(false); }} title="リストを追加" className="p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><List className="w-4 h-4" /></button>
-                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { addBlock('checkbox'); setShowToolMenu(false); }} title="チェックボックスを追加" className="p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><CheckSquare className="w-4 h-4" /></button>
-                      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { fileInputRef.current?.click(); setShowToolMenu(false); }} title="画像を追加" className="p-2 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors"><ImageIcon className="w-4 h-4" /></button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="w-px h-5 bg-[#D7DCD9] mx-0.5 hidden sm:block"></div>
-
+              {/* ヘッダー右側の固定アクションエリア */}
+              <div className="flex items-center gap-1 sm:gap-2 shrink-0 pl-1 sm:pl-2 ml-auto">
+                {/* ツールバー開閉トグルボタン */}
+                <button 
+                  type="button" 
+                  onClick={() => setIsToolbarOpen(!isToolbarOpen)} 
+                  className={`p-1.5 rounded-lg transition-colors ${isToolbarOpen ? 'text-[#00CC5B] bg-[#E0FFEE]' : 'text-[#666666] hover:bg-[#FFFFFF]'}`} 
+                  title="ツールバーを表示/非表示"
+                >
+                  <PenTool className="w-5 h-5" />
+                </button>
                 {editingNote && <button type="button" onClick={() => requestDeleteNote(editingNote.id)} className="text-[#666666] hover:text-[#ED1C24] hover:bg-[#FFFFFF] p-1.5 rounded-lg transition-colors"><Trash2 className="w-4 h-4 sm:w-5 sm:h-5" /></button>}
                 <button type="button" onClick={() => setIsModalOpen(false)} className="text-[#666666] hover:bg-[#FFFFFF] p-1.5 rounded-lg transition-colors"><X className="w-4 h-4 sm:w-5 sm:h-5" /></button>
                 <button type="button" onClick={saveNote} className="ml-0.5 px-3 h-8 bg-[#00CC5B] hover:bg-[#00AC4C] text-[#FFFFFF] rounded-lg font-bold transition-colors flex items-center justify-center text-[12px] sm:text-[13px]">保存</button>
               </div>
             </div>
+
+            {/* ★ 改善点①: タイトルの下に設置した開閉可能な万能ツールバー */}
+            {isToolbarOpen && (
+              <div className="px-3 sm:px-4 py-1.5 border-b border-[#D7DCD9] bg-[#FFFFFF] shrink-0 flex items-center gap-3 overflow-x-auto custom-scrollbar z-10 select-none">
+                {/* 1. ブロック追加グループ */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] font-bold text-[#C4C4C4] mr-1 hidden sm:inline">追加:</span>
+                  <button type="button" onClick={() => addBlock('text')} className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors flex items-center gap-1" title="本文テキストを追加">
+                    <AlignLeft className="w-4 h-4" /> <span className="text-[11px] font-bold hidden md:inline">テキスト</span>
+                  </button>
+                  <button type="button" onClick={() => addBlock('list')} className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors flex items-center gap-1" title="箇条書きリストを追加">
+                    <List className="w-4 h-4" /> <span className="text-[11px] font-bold hidden md:inline">リスト</span>
+                  </button>
+                  <button type="button" onClick={() => addBlock('checkbox')} className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors flex items-center gap-1" title="チェックリストを追加">
+                    <CheckSquare className="w-4 h-4" /> <span className="text-[11px] font-bold hidden md:inline">チェック</span>
+                  </button>
+                  <button type="button" onClick={() => fileInputRef.current?.click()} className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors flex items-center gap-1" title="画像を追加">
+                    <ImageIcon className="w-4 h-4" /> <span className="text-[11px] font-bold hidden md:inline">画像</span>
+                  </button>
+                  <input type="file" ref={fileInputRef} onChange={handleImageSelect} accept="image/*" className="hidden" />
+                </div>
+
+                {/* 仕切り線 */}
+                <div className="w-px h-6 bg-[#D7DCD9] shrink-0"></div>
+
+                {/* 2. インライン文字装飾グループ */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-[11px] font-bold text-[#C4C4C4] mr-1 hidden sm:inline">装飾:</span>
+                  <button 
+                    type="button" 
+                    onMouseDown={(e) => e.preventDefault()} 
+                    onClick={() => applyTextStyle('bold')} 
+                    className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors" 
+                    title="選択した文字を太字にする"
+                  >
+                    <Bold className="w-4 h-4"/>
+                  </button>
+                  <button 
+                    type="button" 
+                    onMouseDown={(e) => e.preventDefault()} 
+                    onClick={() => applyTextStyle('underline')} 
+                    className="p-1.5 text-[#666666] hover:text-[#00CC5B] hover:bg-[#E0FFEE] rounded-lg transition-colors" 
+                    title="選択した文字に下線を引く"
+                  >
+                    <Underline className="w-4 h-4"/>
+                  </button>
+                </div>
+
+                {/* 仕切り線 */}
+                <div className="w-px h-6 bg-[#D7DCD9] shrink-0"></div>
+
+                {/* 3. ダイレクト1タップカラーパレット */}
+                <div className="flex items-center gap-1.5 shrink-0 Palette">
+                  <span className="text-[11px] font-bold text-[#C4C4C4] mr-1 hidden sm:inline">カラー:</span>
+                  {['#ED1C24', '#005BFF', '#00CC5B', '#FF8C00', '#333333'].map(color => (
+                    <button 
+                      key={color} 
+                      type="button" 
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => applyTextStyle('color', color)} 
+                      className="w-5 h-5 rounded-full border border-[#D7DCD9] hover:scale-125 transition-transform shrink-0 shadow-sm" 
+                      style={{ backgroundColor: color }} 
+                      title={color === '#333333' ? '通常色' : color}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 pt-4 sm:pt-6 pb-[50vh] custom-scrollbar flex flex-col relative bg-[#FFFFFF] sm:rounded-b-2xl">
               <div className="flex-1 relative">
