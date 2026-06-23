@@ -8,6 +8,7 @@ import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'fi
 
 let firebaseConfig = {
   apiKey: "AIzaSyCqTZxvNFGf0O4_DDa7JQ45Zd8hxYKqYHY",
+  text: "かんばんノート",
   authDomain: "kanban-cloud-app.firebaseapp.com",
   projectId: "kanban-cloud-app",
   storageBucket: "kanban-cloud-app.firebasestorage.app",
@@ -16,8 +17,8 @@ let firebaseConfig = {
 };
 
 try {
-  if (typeof __firebase_config !== 'undefined') {
-    firebaseConfig = JSON.parse(__firebase_config);
+  if (typeof __text_config !== 'undefined') {
+    firebaseConfig = JSON.parse(__text_config);
   }
 } catch (e) {
   console.error("Firebase config parsing error", e);
@@ -56,12 +57,13 @@ const compressImage = (dataUrl) => {
   });
 };
 
-// ★ 太字・下線・文字色・各種リンクをネスト（入れ子）対応で一貫かつ安全にパースする統合エンジン
+// ★ 太字・下線・文字色・各種リンクをネスト（入れ子）対応で一貫かつ安全にパースする統合エンジン（安全性強化版）
 const parseTextToReact = (text, links = [], activeCategoryId) => {
   if (!text) return null;
 
-  const validLinks = links.filter(l => !l.groupName || l.groupName === 'すべて' || l.groupName === activeCategoryId);
-  validLinks.sort((a, b) => b.word.length - a.word.length);
+  // word プロパティが確実に存在する有効なリンクのみにフィルタリング
+  const validLinks = (links || []).filter(l => l && typeof l.word === 'string' && l.word.trim() !== '' && (!l.groupName || l.groupName === 'すべて' || l.groupName === activeCategoryId));
+  validLinks.sort((a, b) => (b.word?.length || 0) - (a.word?.length || 0));
 
   let currentText = text;
   const result = [];
@@ -125,20 +127,22 @@ const parseTextToReact = (text, links = [], activeCategoryId) => {
 
     // 6. 辞書単語リンク
     if (validLinks.length > 0) {
-      const escapedWords = validLinks.map(l => l.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-      const dictRegex = new RegExp(`(${escapedWords.join('|')})`);
-      const dictMatch = dictRegex.exec(currentText);
-      if (dictMatch && dictMatch.index < closestIndex) {
-        closestIndex = dictMatch.index;
-        closestMatch = dictMatch[0];
-        matchType = 'dict';
-        const matchedLink = validLinks.find(l => l.word === dictMatch[0]);
-        matchData = { text: dictMatch[0], url: matchedLink.url };
+      const escapedWords = validLinks.map(l => (l.word || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).filter(Boolean);
+      if (escapedWords.length > 0) {
+        const dictRegex = new RegExp(`(${escapedWords.join('|')})`);
+        const dictMatch = dictRegex.exec(currentText);
+        if (dictMatch && dictMatch.index < closestIndex) {
+          closestIndex = dictMatch.index;
+          closestMatch = dictMatch[0];
+          matchType = 'dict';
+          const matchedLink = validLinks.find(l => l.word === dictMatch[0]);
+          matchData = { text: dictMatch[0], url: matchedLink?.url || '#' };
+        }
       }
     }
 
     // 一致が見つからなければ、残りのプレーンテキストをすべて出力して終了
-    if (closestIndex === Infinity) {
+    if (closestIndex === Infinity || !closestMatch) {
       result.push(<span key={key++}>{currentText}</span>);
       break;
     }
@@ -148,7 +152,7 @@ const parseTextToReact = (text, links = [], activeCategoryId) => {
       result.push(<span key={key++}>{currentText.substring(0, closestIndex)}</span>);
     }
 
-    // 一致箇所をReact要素に変換して登録（太字、下線、色は再帰パースでネスト対応）
+    // 一致箇所をReact要素に変換して登録
     if (matchType === 'color') {
       result.push(
         <span key={key++} style={{ color: matchData.color }}>
@@ -255,7 +259,7 @@ export default function App() {
   const [activeBlockId, setActiveBlockId] = useState(null);
   const activeBlockInfoRef = useRef({ id: null, cursorPosition: 0 });
 
-  // ★ ツールバーの開閉管理State (デフォルトで開く)
+  // ツールバーの開閉管理State (デフォルトで開く)
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
 
   // リンク集用 State
@@ -750,7 +754,7 @@ export default function App() {
     const newValue = text.substring(0, start) + replacement + text.substring(end);
     updateBlock(targetId, { content: newValue });
 
-    // ★ 改善点②: 装飾を適用した瞬間、生テキストに留まらず即プレビュー表示（非アクティブ化）に切り替える
+    // 装飾を適用した瞬間、生テキストに留まらず即プレビュー表示（非アクティブ化）に切り替える
     setTimeout(() => {
       setActiveBlockId(null);
     }, 50);
@@ -957,7 +961,7 @@ export default function App() {
   let activeNotes = [];
   if (activeCategoryId === 'all_list') {
     let filtered = notes.filter(n => showCompleted ? true : !n.isCompleted);
-    const categoryOrderMap = categories.reduce((acc, cat) => { acc[cat.id] = cat.order; return acc; }, {});
+    const categoryOrderMap = categories.reduce((acc, cat) => { if (cat && cat.id) acc[cat.id] = cat.order; return acc; }, {});
     
     filtered.sort((a, b) => {
       const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
@@ -994,9 +998,9 @@ export default function App() {
     }
   };
 
-  const linkGroups = ['すべて', ...Array.from(new Set(links.map(l => l.groupName).filter(Boolean)))];
+  const linkGroups = ['すべて', ...Array.from(new Set((links || []).map(l => l?.groupName).filter(Boolean)))];
   if (!linkGroups.includes('一般')) linkGroups.push('一般');
-  const filteredLinks = linkFilter === 'すべて' ? links : links.filter(l => (l.groupName || '一般') === linkFilter);
+  const filteredLinks = linkFilter === 'すべて' ? (links || []) : (links || []).filter(l => l && (l.groupName || '一般') === linkFilter);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F7F9F8] text-[#333333]">
@@ -1115,7 +1119,7 @@ export default function App() {
               <Menu className="w-6 h-6" />
             </button>
             <h2 className="text-[18px] sm:text-[20px] font-bold text-[#333333]">
-              {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : categories.find(c => c.id === activeCategoryId)?.name}
+              {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : categories.find(c => c && c.id === activeCategoryId)?.name || 'ボード'}
             </h2>
           </div>
           
@@ -1140,7 +1144,7 @@ export default function App() {
               <div className="bg-[#FFFFFF] rounded-xl shadow-sm border border-[#D7DCD9] overflow-hidden flex flex-col flex-1">
                 <div className="overflow-y-auto custom-scrollbar flex-1">
                   <table className="w-full text-left text-[#333333] text-[13px]">
-                    <thead className="bg-[#FFFFFF] sticky top-0 z-10 shadow-sm">
+                    <thead className="bg-[#F7F9F8] sticky top-0 z-10 border-b border-[#D7DCD9]">
                       <tr>
                         <th className="px-2 py-1.5 font-bold w-10 sm:w-12 text-center text-[#666666]">完了</th>
                         <th className="px-2 py-1.5 font-bold w-20 sm:w-28 text-[#666666] cursor-pointer hover:bg-[#F7F9F8] transition-colors select-none" onClick={() => handleSort('dueDate')}>
@@ -1155,10 +1159,10 @@ export default function App() {
                     </thead>
                     <tbody>
                       {activeNotes.map((note, index) => {
-                        const catName = note.categoryId === 'freenote' ? 'フリーノート' : categories.find(c => c.id === note.categoryId)?.name || '不明';
+                        const catName = note.categoryId === 'freenote' ? 'フリーノート' : categories.find(c => c && c.id === note.categoryId)?.name || '不明';
                         const dueDateInfo = formatDueDate(note.dueDate);
                         // 本文からテキスト情報だけを抽出し、改行や余分な空白を取り除いて1行にする
-                        const plainText = note.blocks?.filter(b => b.type === 'text' || b.type === 'list' || b.type === 'checkbox').map(b => b.content).join(' ').replace(/\s+/g, ' ').trim();
+                        const plainText = note.blocks?.filter(b => b && (b.type === 'text' || b.type === 'list' || b.type === 'checkbox')).map(b => b.content).join(' ').replace(/\s+/g, ' ').trim();
                         
                         return (
                           <tr key={note.id} onClick={() => openEditModal(note)} className={`cursor-pointer transition-colors group ${index % 2 === 0 ? 'bg-[#FFFFFF]' : 'bg-[#F7F9F8]/50'} hover:bg-[#E0FFEE]/30`}>
@@ -1199,8 +1203,8 @@ export default function App() {
               <div className="w-full h-full overflow-auto custom-scrollbar" ref={freenoteRef} onDoubleClick={handleFreenoteDoubleClick}>
                 <div style={{ width: 5000 * freenoteZoom, height: 5000 * freenoteZoom, backgroundImage: 'radial-gradient(#D7DCD9 2px, transparent 2px)', backgroundSize: `${30 * freenoteZoom}px ${30 * freenoteZoom}px` }} className="relative pointer-events-none origin-top-left">
                   <div className="pointer-events-auto" style={{ transform: `scale(${freenoteZoom})`, transformOrigin: '0 0', width: 5000, height: 5000 }}>
-                    {notes.filter(n => n.categoryId === 'freenote').map(note => {
-                      const firstImageBlock = note.blocks?.find(b => b.type === 'image');
+                    {notes.filter(n => n && n.categoryId === 'freenote').map(note => {
+                      const firstImageBlock = note.blocks?.find(b => b && b.type === 'image');
                       const dueDateInfo = formatDueDate(note.dueDate);
                       return (
                         <div 
@@ -1335,7 +1339,7 @@ export default function App() {
               ) : (
                 <div className="columns-2 lg:columns-3 xl:columns-4 gap-3 sm:gap-6 pb-10">
                   {activeNotes.map((note) => {
-                    const firstImageBlock = note.blocks?.find(b => b.type === 'image');
+                    const firstImageBlock = note.blocks?.find(b => b && b.type === 'image');
                     const dueDateInfo = formatDueDate(note.dueDate);
                     return (
                       <div
@@ -1375,25 +1379,28 @@ export default function App() {
                         </div>
                         <div className="relative overflow-hidden max-h-[300px] rounded-b-lg">
                           <div className="space-y-0 pb-6">
-                            {note.blocks?.map(block => (
-                              <div key={block.id} className="py-0">
-                                {block.type === 'text' && <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`} />}
-                                {block.type === 'list' && (
-                                  <div className={`flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`}>
-                                    <span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
-                                  </div>
-                                )}
-                                {block.type === 'checkbox' && (
-                                  <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
-                                    {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
-                                    <span className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#333333]'} leading-[1.6]`}>
-                                      <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} />
-                                    </span>
-                                  </div>
-                                )}
-                                {block.type === 'image' && !firstImageBlock && <div className="text-[12px] text-[#666666] flex items-center gap-[4px] my-1"><ImageIcon className="w-3 h-3"/> 画像</div>}
-                              </div>
-                            ))}
+                            {note.blocks?.map(block => {
+                              if (!block) return null;
+                              return (
+                                <div key={block.id} className="py-0">
+                                  {block.type === 'text' && <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`} />}
+                                  {block.type === 'list' && (
+                                    <div className={`flex items-start gap-[4px] font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`}>
+                                      <span className="text-[#666666] font-bold mt-[2px] shrink-0">•</span><span><FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} /></span>
+                                    </div>
+                                  )}
+                                  {block.type === 'checkbox' && (
+                                    <div className="flex items-start gap-[4px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
+                                      {block.checked ? <CheckCircle2 className="w-[16px] h-[16px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[16px] h-[16px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
+                                      <span className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6]`}>
+                                        <FormattedText text={block.content} links={links} activeCategoryId={note.categoryId} />
+                                      </span>
+                                    </div>
+                                  )}
+                                  {block.type === 'image' && !firstImageBlock && <div className="text-[12px] text-[#666666] flex items-center gap-[4px] my-1"><ImageIcon className="w-3 h-3"/> 画像</div>}
+                                </div>
+                              );
+                            })}
                           </div>
                           <div className={`absolute bottom-0 left-0 right-0 h-10 pointer-events-none ${note.isCompleted ? 'bg-gradient-to-t from-[#F7F9F8] to-transparent' : 'bg-gradient-to-t from-[#FFFFFF] to-transparent'}`}></div>
                         </div>
@@ -1412,7 +1419,7 @@ export default function App() {
         <div className="fixed inset-0 bg-[#333333]/60 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4 z-50">
           <div className="bg-[#FFFFFF] sm:rounded-2xl shadow-2xl w-full max-w-2xl h-full sm:h-[95vh] sm:max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-200">
             
-            {/* ★ 改善点①: すっきり1行のヘッダー */}
+            {/* すっきり1行のヘッダー */}
             <div className="px-3 sm:px-4 py-2 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex items-center justify-between gap-1 sm:gap-2 z-20 relative">
               <div className="flex-1 flex items-center gap-1 sm:gap-2 overflow-x-auto custom-scrollbar pb-1 -mb-1">
                 <input type="text" required value={formData.title} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
@@ -1457,7 +1464,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* ★ 改善点①: タイトルの下に設置した開閉可能な万能ツールバー */}
+            {/* タイトルの下に設置した開閉可能な万能ツールバー */}
             {isToolbarOpen && (
               <div className="px-3 sm:px-4 py-1.5 border-b border-[#D7DCD9] bg-[#FFFFFF] shrink-0 flex items-center gap-3 overflow-x-auto custom-scrollbar z-10 select-none">
                 {/* 1. ブロック追加グループ */}
