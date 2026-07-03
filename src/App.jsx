@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle, LogOut, Calendar, Clock, PenTool, Menu, GripVertical, ZoomIn, ZoomOut, Target, BookOpen, ExternalLink, Bold, Underline, Palette } from 'lucide-react';
 
-// --- Firebase のインポート ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -33,7 +32,6 @@ const db = isConfigValid ? getFirestore(app) : null;
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-// 画像圧縮処理
 const compressImage = (dataUrl) => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -56,9 +54,7 @@ const compressImage = (dataUrl) => {
   });
 };
 
-// ★ HTML内のテキストノードを検索し、URLと辞書ワードを安全に自動リンク化する関数（超安全ガード付き）
 const applyDictionaryLinks = (htmlString, links, categoryId) => {
-  // オブジェクトが渡された場合のクラッシュを100%防止
   if (!htmlString || typeof htmlString !== 'string') return '';
   
   const validLinks = (links || []).filter(l => l && typeof l.word === 'string' && l.word.trim() !== '' && (!l.groupName || l.groupName === 'すべて' || l.groupName === categoryId));
@@ -72,7 +68,7 @@ const applyDictionaryLinks = (htmlString, links, categoryId) => {
     const urlRegex = /(https?:\/\/[^\s<]+)/g;
 
     const walk = (node) => {
-      if (node.nodeType === 3) { // Text node
+      if (node.nodeType === 3) {
         let text = node.nodeValue;
         let replaced = false;
 
@@ -109,16 +105,13 @@ const applyDictionaryLinks = (htmlString, links, categoryId) => {
   }
 };
 
-// ★ WYSIWYG エディタブロック（編集中も色が変わる！）
 const ContentEditableBlock = ({ html, onChange, onKeyDown, onPaste, className, placeholder, id }) => {
   const ref = useRef(null);
 
   useEffect(() => {
-    // フォーカスが当たっていない、かつ内容が異なる場合のみDOMを更新（カーソル飛び防止）
     if (ref.current && html !== ref.current.innerHTML && document.activeElement !== ref.current) {
       ref.current.innerHTML = html || '';
     }
-    // 初期マウント時のセット
     if (ref.current && ref.current.innerHTML === '' && html) {
       ref.current.innerHTML = html;
     }
@@ -206,10 +199,18 @@ export default function App() {
   const [canvasDragState, setCanvasDragState] = useState(null);
   const [freenoteZoom, setFreenoteZoom] = useState(1);
 
-  // ゼロクラッシュ保護用安全変数
+  // ★ ゼロクラッシュ保護用安全変数
   const safeCategories = Array.isArray(categories) ? categories.filter(Boolean) : [];
   const safeNotes = Array.isArray(notes) ? notes.filter(Boolean) : [];
   const safeLinks = Array.isArray(links) ? links.filter(Boolean) : [];
+
+  // ★ 超安全設計: linkFormDataがどのような状態でも絶対にオブジェクトであることを保証し、プロパティの安全アクセスを100%確保する
+  const safeLinkFormData = {
+    id: linkFormData && typeof linkFormData.id === 'string' ? linkFormData.id : '',
+    word: linkFormData && typeof linkFormData.word === 'string' ? linkFormData.word : '',
+    url: linkFormData && typeof linkFormData.url === 'string' ? linkFormData.url : '',
+    groupName: linkFormData && typeof linkFormData.groupName === 'string' ? linkFormData.groupName : '一般'
+  };
 
   const dueDateParts = getDueDateParts(formData.dueDate);
   const handleDateChange = (type, val) => {
@@ -221,18 +222,6 @@ export default function App() {
       if (!isNaN(dt.getTime())) setFormData({...formData, dueDate: dt.toISOString()});
     }
   };
-
-  // フリーノートの初期表示を左上に確実に設定する
-  useEffect(() => {
-    if (activeCategoryId === 'freenote') {
-      setTimeout(() => {
-        if (freenoteRef.current) {
-          freenoteRef.current.scrollTop = 0;
-          freenoteRef.current.scrollLeft = 0;
-        }
-      }, 50);
-    }
-  }, [activeCategoryId]);
 
   useEffect(() => {
     if (!isConfigValid) return;
@@ -411,7 +400,6 @@ export default function App() {
     }
   };
 
-  // --- ドラッグ＆ドロップ（カテゴリー） ---
   const handleCategoryDragStart = (e, id) => {
     if (!isCategoryEditMode) { e.preventDefault(); return; }
     e.stopPropagation();
@@ -475,7 +463,6 @@ export default function App() {
     await setDoc(getNoteDoc(sourceNoteId), { categoryId: targetCategoryId, order: Date.now() }, { merge: true });
   };
 
-  // --- ドラッグ＆ドロップ（メモ・付箋） ---
   const handleDragStart = (e, id) => {
     e.dataTransfer.setData('noteId', id); setDraggedNoteId(id);
     setTimeout(() => { const el = document.getElementById(`note-${id}`); if (el) el.classList.add('opacity-40'); }, 0);
@@ -558,7 +545,6 @@ export default function App() {
     setIsModalOpen(true);
   };
 
-  // --- ドラッグ＆ドロップ（リンク集） ---
   const handleLinkDragStart = (e, id) => {
     e.dataTransfer.setData('linkId', id); setDraggedLinkId(id);
   };
@@ -606,25 +592,6 @@ export default function App() {
     setLinkDragOverIndicator(null);
   };
 
-  // 削除確認処理
-  const requestDeleteCategory = (id, name) => setConfirmDialog({ isOpen: true, message: `ボード「${typeof name === 'string' ? name : '無題'}」を削除しますか？`, targetId: id, actionType: 'category' });
-  const requestDeleteNote = (id) => setConfirmDialog({ isOpen: true, message: 'このメモを削除しますか？', targetId: id, actionType: 'note' });
-  const requestDeleteLink = (id) => setConfirmDialog({ isOpen: true, message: 'このリンクを削除しますか？', targetId: id, actionType: 'link' });
-
-  const executeConfirmAction = async () => {
-    const { actionType, targetId } = confirmDialog;
-    if (actionType === 'category') {
-      await handleDeleteCategory(targetId);
-    } else if (actionType === 'note') {
-      await deleteNote(targetId);
-      setIsModalOpen(false);
-    } else if (actionType === 'link') {
-      await deleteLink(targetId);
-    }
-    setConfirmDialog({ isOpen: false, message: '', targetId: null, actionType: null });
-  };
-
-  // --- ブロックエディタ（WYSIWYG化） ---
   const addBlock = (type) => {
     setFormData(prev => {
       const newId = generateId();
@@ -640,7 +607,6 @@ export default function App() {
 
   const removeBlock = (blockId) => setFormData(prev => ({ ...prev, blocks: prev.blocks.filter(b => b && b.id !== blockId) }));
 
-  // エンターキーでの新しい行（ブロック）の追加
   const handleKeyDown = (e, index, blockType, blockId) => {
     if (e.nativeEvent.isComposing) return;
     
@@ -726,7 +692,6 @@ export default function App() {
     }
   };
 
-  // すべてのメモのソートハンドラ
   const handleSort = (key) => {
     if (allListSortConfig.key === key) {
       setAllListSortConfig({ key, direction: allListSortConfig.direction === 'asc' ? 'desc' : 'asc' });
@@ -746,7 +711,6 @@ export default function App() {
     );
   }
 
-  // ★ ログイン画面
   if (!user && !loading) {
     return (
       <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333] p-6">
@@ -761,16 +725,6 @@ export default function App() {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#666666]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#00CC5B] mb-4" />
-        <p className="font-medium text-[16px]">同期中...</p>
-      </div>
-    );
-  }
-
-  // リスト生成
   let activeNotes = [];
   if (activeCategoryId === 'all_list') {
     let filtered = safeNotes.filter(n => n && (showCompleted ? true : !n.isCompleted));
@@ -808,6 +762,10 @@ export default function App() {
   const linkGroups = ['すべて', ...Array.from(new Set(safeLinks.map(l => l?.groupName).filter(Boolean)))];
   if (!linkGroups.includes('一般')) linkGroups.push('一般');
   const filteredLinks = linkFilter === 'すべて' ? safeLinks : safeLinks.filter(l => l && (l.groupName || '一般') === linkFilter);
+
+  // ★ 看板ボード表示名の安全キャスト（真っ白エラープロテクト）
+  const activeCategoryObj = safeCategories.find(c => c && c.id === activeCategoryId);
+  const activeCategoryName = activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : (activeCategoryObj && typeof activeCategoryObj.name === 'string' ? activeCategoryObj.name : 'ボード');
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F7F9F8] text-[#333333]">
@@ -887,13 +845,13 @@ export default function App() {
                 {isCategoryEditMode && <GripVertical className="w-4 h-4 text-[#C4C4C4] cursor-grab active:cursor-grabbing shrink-0" />}
 
                 {editingCategoryId === category.id ? (
-                  <input type="text" value={typeof editingCategoryName === 'string' ? editingCategoryName : ''} onChange={(e) => setEditingCategoryName(e.target.value)} onBlur={() => saveCategoryName(category.id)} onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)} autoFocus className="border border-[#00CC5B] rounded px-2 py-0.5 text-[14px] outline-none bg-[#FFFFFF] w-full" />
+                  <input type="text" value={editingCategoryName} onChange={(e) => setEditingCategoryName(e.target.value)} onBlur={() => saveCategoryName(category.id)} onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)} autoFocus className="border border-[#00CC5B] rounded px-2 py-0.5 text-[14px] outline-none bg-[#FFFFFF] w-full" />
                 ) : (
                   <>
                     <span className="font-bold text-[14px] select-none flex-1 truncate">{typeof category.name === 'string' ? category.name : '無題のボード'}</span>
                     {isCategoryEditMode && (
                       <div className="flex items-center ml-1 shrink-0 gap-1">
-                        <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(typeof category.name === 'string' ? category.name : ''); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#00CC5B] hover:bg-[#E0FFEE] transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#00CC5B] hover:bg-[#E0FFEE] transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
                         <button onClick={(e) => { e.stopPropagation(); requestDeleteCategory(category.id, category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#ED1C24] transition-colors rounded"><X className="w-3.5 h-3.5" /></button>
                       </div>
                     )}
@@ -919,9 +877,8 @@ export default function App() {
             <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 mr-2 text-[#666666] hover:bg-[#F7F9F8] hover:text-[#333333] rounded-lg transition-colors">
               <Menu className="w-6 h-6" />
             </button>
-            {/* ★ ここでオブジェクトが入り込むのをガード（白くなる原因だった場所） */}
             <h2 className="text-[18px] sm:text-[20px] font-bold text-[#333333]">
-              {activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : String(safeCategories.find(c => c && c.id === activeCategoryId)?.name || 'ボード')}
+              {activeCategoryName}
             </h2>
           </div>
           
@@ -938,6 +895,7 @@ export default function App() {
           )}
         </header>
 
+        {}
         <main className="flex-1 overflow-y-auto relative">
           
           {/* リスト表示（すべてのメモ） */}
@@ -964,7 +922,6 @@ export default function App() {
                         const catName = note.categoryId === 'freenote' ? 'フリーノート' : safeCategories.find(c => c && c.id === note.categoryId)?.name || '不明';
                         const dueDateInfo = formatDueDate(note.dueDate);
                         
-                        // HTMLタグを削除してプレーンテキストにする安全な処理
                         const plainText = Array.isArray(note.blocks)
                           ? note.blocks.filter(b => b && (b.type === 'text' || b.type === 'list' || b.type === 'checkbox'))
                               .map(b => (typeof b.content === 'string' ? b.content : '').replace(/<[^>]*>?/gm, ''))
@@ -1005,6 +962,7 @@ export default function App() {
             </div>
           )}
 
+          {/* フリーノート画面 */}
           {activeCategoryId === 'freenote' && (
             <>
               <div className="w-full h-full overflow-auto custom-scrollbar" ref={freenoteRef} onDoubleClick={handleFreenoteDoubleClick}>
@@ -1045,9 +1003,11 @@ export default function App() {
                                   return (
                                     <div key={block.id || generateId()} className="py-0">
                                       {block.type === 'text' && <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666] break-words" />}
+                                      {/* ★ リスト・チェックボックスの「・」とテキストの高さピッタリ調整（flex-start ＋ mt-[2px] などのピクセルベース調整） */}
                                       {block.type === 'list' && (
                                         <div className="flex items-start gap-[6px] font-medium leading-[1.6] text-[14px] text-[#666666]">
-                                          <span className="font-bold mt-[1px] text-[18px] leading-none shrink-0">•</span><div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="break-words flex-1" />
+                                          <span className="font-bold mt-[1px] text-[18px] leading-none shrink-0 select-none">•</span>
+                                          <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="break-words flex-1" />
                                         </div>
                                       )}
                                       {block.type === 'checkbox' && (
@@ -1082,8 +1042,9 @@ export default function App() {
             </>
           )}
 
+          {/* リンク集画面 */}
           {activeCategoryId === 'linkbook' && (
-            <div className="max-w-3xl mx-auto h-full p-4 sm:p-6 flex flex-col">
+            <div className="max-w-3xl mx-auto h-full p-4 sm:p-6 flex flex-col animate-in fade-in duration-200">
               <div className="flex gap-2 mb-4 overflow-x-auto custom-scrollbar pb-1">
                 {linkGroups.map(group => (
                   <button 
@@ -1091,7 +1052,7 @@ export default function App() {
                     onClick={() => setLinkFilter(group)}
                     className={`px-4 py-2 rounded-full text-[14px] font-bold whitespace-nowrap transition-colors border ${linkFilter === group ? 'bg-[#333333] text-white border-[#333333]' : 'bg-white text-[#666666] border-[#D7DCD9] hover:border-[#333333]'}`}
                   >
-                    {group}
+                    {typeof group === 'string' ? group : 'グループ'}
                   </button>
                 ))}
               </div>
@@ -1109,7 +1070,7 @@ export default function App() {
                       onDragOver={(e) => handleLinkDragOver(e, link.id)}
                       onDragLeave={() => setLinkDragOverIndicator(null)}
                       onDrop={(e) => handleLinkDrop(e, link.id)}
-                      className={`px-3 py-2 flex items-center justify-between gap-4 transition-colors cursor-grab active:cursor-grabbing rounded-lg relative hover:bg-[#F7F9F8]`}
+                      className="px-3 py-2 flex items-center justify-between gap-4 transition-colors cursor-grab active:cursor-grabbing rounded-lg relative hover:bg-[#F7F9F8]"
                     >
                       {linkDragOverIndicator?.id === link.id && linkDragOverIndicator?.position === 'top' && (
                         <div className="absolute top-0 left-0 right-0 h-1 bg-[#00CC5B] rounded-full z-10 -mt-[2px]"></div>
@@ -1140,6 +1101,7 @@ export default function App() {
             </div>
           )}
 
+          {/* ★ 看板ボード表示（通常カード一覧） */}
           {activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook' && activeCategoryId !== 'all_list' && (
             <div className="max-w-7xl mx-auto h-full p-4 sm:p-6">
               {safeActiveNotes.length === 0 ? (
@@ -1158,7 +1120,7 @@ export default function App() {
                         key={note.id}
                         draggable={activeCategoryId !== 'deadline'}
                         onDragStart={(e) => handleDragStart(e, note.id)}
-                        onDragEnd={handleDragEnd}
+                        onDragEnd={(e) => handleDragEnd(e, note.id)}
                         onDragOver={(e) => handleDragOverNote(e, note.id)}
                         onDragLeave={handleDragLeaveNote}
                         onDrop={(e) => handleDropOnNote(e, note.id)}
@@ -1195,14 +1157,16 @@ export default function App() {
                               return (
                                 <div key={block.id || generateId()} className="py-0">
                                   {block.type === 'text' && <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className={`whitespace-pre-wrap font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'} break-words`} />}
+                                  {/* ★ 看板ボード上での「・」とテキストの高さピッタリ調整（mt-[4px]） */}
                                   {block.type === 'list' && (
-                                    <div className={`flex items-start gap-[6px] font-medium leading-[1.6] text-[14px] ${note.isCompleted ? 'text-[#666666]' : 'text-[#333333]'}`}>
-                                      <span className="text-[#666666] font-bold mt-[1px] text-[18px] leading-none shrink-0">•</span><div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="break-words flex-1" />
+                                    <div className="flex items-start gap-[6px] font-medium leading-[1.6] text-[14px] text-[#666666]">
+                                      <span className="font-bold mt-[4px] text-[18px] leading-none shrink-0 select-none">•</span>
+                                      <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="break-words flex-1" />
                                     </div>
                                   )}
                                   {block.type === 'checkbox' && (
                                     <div className="flex items-start gap-[6px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
-                                      {block.checked ? <CheckCircle2 className="w-[18px] h-[18px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[18px] h-[18px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
+                                      {block.checked ? <CheckCircle2 className="w-[18px] h-[18px] text-[#00CC5B] mt-[4px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[18px] h-[18px] text-[#C4C4C4] mt-[4px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
                                       <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className={`${block.checked || note.isCompleted ? 'line-through text-[#666666]' : 'text-[#333333]'} leading-[1.6] break-words flex-1`} />
                                     </div>
                                   )}
@@ -1231,7 +1195,7 @@ export default function App() {
             {/* すっきり1行のヘッダー */}
             <div className="px-3 sm:px-4 py-2 border-b border-[#D7DCD9] bg-[#F7F9F8] sm:rounded-t-2xl shrink-0 flex items-center justify-between gap-1 sm:gap-2 z-20 relative">
               <div className="flex-1 flex items-center gap-1 sm:gap-2 overflow-x-auto custom-scrollbar pb-1 -mb-1">
-                <input type="text" required value={typeof formData.title === 'string' ? formData.title : ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
+                <input type="text" required value={formData.title || ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
                 
                 {/* 期限（年を省略した MM/DD 表示） */}
                 <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-1.5 sm:px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0 hover:border-[#C4C4C4] h-8">
@@ -1250,9 +1214,9 @@ export default function App() {
                 </div>
 
                 {/* ボード名選択 */}
-                <select value={typeof formData.categoryId === 'string' ? formData.categoryId : 'freenote'} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
+                <select value={formData.categoryId || 'freenote'} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
                   <option value="freenote">フリーノート</option>
-                  {safeCategories.map(c => c && c.id ? <option key={c.id} value={c.id}>{typeof c.name === 'string' ? c.name : 'ボード'}</option> : null)}
+                  {safeCategories.map(c => c && <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
 
@@ -1296,7 +1260,7 @@ export default function App() {
                 {/* 仕切り線 */}
                 <div className="w-px h-6 bg-[#D7DCD9] shrink-0"></div>
 
-                {/* 2. インライン文字装飾グループ（WYSIWYG用ネイティブコマンド） */}
+                {/* 2. インライン文字装飾グループ */}
                 <div className="flex items-center gap-1 shrink-0">
                   <span className="text-[11px] font-bold text-[#C4C4C4] mr-1 hidden sm:inline">装飾:</span>
                   <button 
@@ -1345,9 +1309,9 @@ export default function App() {
                     if (!block) return null;
                     return (
                       <div key={block.id || generateId()} className="flex items-start group relative">
-                        {/* ★ リスト・チェックボックスのアイコン位置調整（mt-[4px] でテキストのベースラインに合わせる） */}
+                        {/* ★ 編集画面内の「・」とテキストの高さピッタリ調整（mt-[4px]） */}
                         <div className={`flex justify-center shrink-0 ${block.type === 'text' ? 'w-1 sm:w-0' : 'w-6 sm:w-7 mt-[4px]'}`}> 
-                          {block.type === 'list' && <div className="text-[#666666] font-bold text-[20px] leading-none">•</div>}
+                          {block.type === 'list' && <div className="text-[#666666] font-bold text-[20px] leading-none select-none">•</div>}
                           {block.type === 'checkbox' && (
                             <div className="cursor-pointer" onClick={() => updateBlock(block.id, { checked: !block.checked })}>
                               {block.checked ? <CheckSquare className="w-5 h-5 text-[#00CC5B]" /> : <Square className="w-5 h-5 text-[#C4C4C4] hover:text-[#00CC5B]" />}
@@ -1403,38 +1367,38 @@ export default function App() {
         </div>
       )}
 
-      {/* リンク集追加・編集モーダル */}
+      {/* ★ リンク集追加・編集モーダル（safeLinkFormData を使用して 100% 安全化） */}
       {isLinkModalOpen && (
         <div className="fixed inset-0 bg-[#333333]/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-[#FFFFFF] rounded-2xl shadow-xl w-full max-w-md p-6 flex flex-col gap-4 animate-in fade-in zoom-in duration-200">
             <div className="flex justify-between items-center mb-2">
-              <h3 className="font-bold text-[18px] text-[#333333]">{linkFormData.id ? 'リンクを編集' : 'リンクを追加'}</h3>
+              <h3 className="font-bold text-[18px] text-[#333333]">{safeLinkFormData.id ? 'リンクを編集' : 'リンクを追加'}</h3>
               <button onClick={() => setIsLinkModalOpen(false)} className="text-[#666666] hover:bg-[#F7F9F8] p-1.5 rounded-lg"><X className="w-5 h-5"/></button>
             </div>
             
             <div className="flex flex-col gap-1">
               <label className="text-[12px] font-bold text-[#666666]">登録ワード <span className="text-[#ED1C24]">*</span></label>
-              <input type="text" value={typeof linkFormData.word === 'string' ? linkFormData.word : ''} onChange={e => setLinkFormData({...linkFormData, word: e.target.value})} placeholder="例: デザインガイド" className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
+              <input type="text" value={safeLinkFormData.word} onChange={e => setLinkFormData({...safeLinkFormData, word: e.target.value})} placeholder="例: デザインガイド" className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
               <p className="text-[10px] text-[#666666]">メモ内にこのワードが含まれると自動でリンク化されます。</p>
             </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-[12px] font-bold text-[#666666]">URL <span className="text-[#ED1C24]">*</span></label>
-              <input type="url" value={typeof linkFormData.url === 'string' ? linkFormData.url : ''} onChange={e => setLinkFormData({...linkFormData, url: e.target.value})} placeholder="https://..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
+              <input type="url" value={safeLinkFormData.url} onChange={e => setLinkFormData({...safeLinkFormData, url: e.target.value})} placeholder="https://..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
             </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-[12px] font-bold text-[#666666]">カテゴリー（グループ）</label>
-              <input type="text" value={typeof linkFormData.groupName === 'string' ? linkFormData.groupName : ''} onChange={e => setLinkFormData({...linkFormData, groupName: e.target.value})} placeholder="例: 共有リンク、一般..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
+              <input type="text" value={safeLinkFormData.groupName} onChange={e => setLinkFormData({...safeLinkFormData, groupName: e.target.value})} placeholder="例: 共有リンク、一般..." className="px-3 py-2 border border-[#D7DCD9] rounded-lg outline-none focus:border-[#00CC5B] text-[14px]" />
             </div>
 
             <div className="flex items-center justify-between mt-4">
-              {linkFormData.id ? (
-                <button onClick={() => requestDeleteLink(linkFormData.id)} className="text-[#ED1C24] hover:bg-[#FFE600]/30 px-3 py-2 rounded-lg text-[14px] font-bold transition-colors">削除</button>
+              {safeLinkFormData.id ? (
+                <button onClick={() => requestDeleteLink(safeLinkFormData.id)} className="text-[#ED1C24] hover:bg-[#FFE600]/30 px-3 py-2 rounded-lg text-[14px] font-bold transition-colors">削除</button>
               ) : <div></div>}
               <div className="flex items-center gap-2">
                 <button onClick={() => setIsLinkModalOpen(false)} className="px-4 py-2 text-[#666666] bg-[#FFFFFF] border border-[#D7DCD9] hover:bg-[#F7F9F8] rounded-lg font-bold text-[14px]">キャンセル</button>
-                <button onClick={saveLink} disabled={!linkFormData.word || !linkFormData.url} className="px-5 py-2 bg-[#00CC5B] hover:bg-[#00AC4C] disabled:bg-[#C4C4C4] text-[#FFFFFF] rounded-lg font-bold text-[14px] transition-colors">保存</button>
+                <button onClick={saveLink} disabled={!safeLinkFormData.word || !safeLinkFormData.url} className="px-5 py-2 bg-[#00CC5B] hover:bg-[#00AC4C] text-[#FFFFFF] rounded-lg font-bold text-[14px] transition-colors">保存</button>
               </div>
             </div>
           </div>
