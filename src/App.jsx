@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Plus, X, Trash2, Edit2, Image as ImageIcon, CheckCircle2, Circle, CheckSquare, Square, AlignLeft, List, Check, FolderPlus, Loader2, AlertCircle, LogOut, Calendar, Clock, PenTool, Menu, GripVertical, ZoomIn, ZoomOut, Target, BookOpen, ExternalLink, Bold, Underline, Palette } from 'lucide-react';
 
+// --- Firebase のインポート ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
@@ -32,6 +33,7 @@ const db = isConfigValid ? getFirestore(app) : null;
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
+// 画像圧縮処理
 const compressImage = (dataUrl) => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -54,6 +56,7 @@ const compressImage = (dataUrl) => {
   });
 };
 
+// ★ HTML内のテキストノードを検索し、URLと辞書ワードを安全に自動リンク化する関数（型安全ガード付き）
 const applyDictionaryLinks = (htmlString, links, categoryId) => {
   if (!htmlString || typeof htmlString !== 'string') return '';
   
@@ -68,7 +71,7 @@ const applyDictionaryLinks = (htmlString, links, categoryId) => {
     const urlRegex = /(https?:\/\/[^\s<]+)/g;
 
     const walk = (node) => {
-      if (node.nodeType === 3) {
+      if (node.nodeType === 3) { // Text node
         let text = node.nodeValue;
         let replaced = false;
 
@@ -105,13 +108,16 @@ const applyDictionaryLinks = (htmlString, links, categoryId) => {
   }
 };
 
+// ★ WYSIWYG エディタブロック（編集中も色が変わる！）
 const ContentEditableBlock = ({ html, onChange, onKeyDown, onPaste, className, placeholder, id }) => {
   const ref = useRef(null);
 
   useEffect(() => {
+    // フォーカスが当たっていない、かつ内容が異なる場合のみDOMを更新（カーソル飛び防止）
     if (ref.current && html !== ref.current.innerHTML && document.activeElement !== ref.current) {
       ref.current.innerHTML = html || '';
     }
+    // 初期マウント時のセット
     if (ref.current && ref.current.innerHTML === '' && html) {
       ref.current.innerHTML = html;
     }
@@ -149,6 +155,16 @@ const getDueDateParts = (isoString) => {
     hour: String(d.getHours()).padStart(2, '0'),
     minute: String(d.getMinutes()).padStart(2, '0')
   };
+};
+
+// 期限カレンダー用・安全パース処理（白画面クラッシュプロテクト）
+const getCompactDueDateText = (dateStr) => {
+  if (!dateStr || typeof dateStr !== 'string') return '日付設定';
+  const parts = dateStr.split('-');
+  if (parts.length >= 3) {
+    return `${parts[1]}/${parts[2]}`;
+  }
+  return '日付設定';
 };
 
 export default function App() {
@@ -222,6 +238,18 @@ export default function App() {
       if (!isNaN(dt.getTime())) setFormData({...formData, dueDate: dt.toISOString()});
     }
   };
+
+  // フリーノートの初期表示を左上に確実に設定する
+  useEffect(() => {
+    if (activeCategoryId === 'freenote') {
+      setTimeout(() => {
+        if (freenoteRef.current) {
+          freenoteRef.current.scrollTop = 0;
+          freenoteRef.current.scrollLeft = 0;
+        }
+      }, 50);
+    }
+  }, [activeCategoryId]);
 
   useEffect(() => {
     if (!isConfigValid) return;
@@ -301,7 +329,7 @@ export default function App() {
 
   const handleTabClick = (categoryId) => {
     setActiveCategoryId(categoryId);
-    setIsSidebarOpen(false);
+    setIsSidebarOpen(false); // タブクリック時にサイドバーを閉じる
   };
 
   const handleAddCategory = async () => {
@@ -337,6 +365,7 @@ export default function App() {
     setIsModalOpen(true);
   };
 
+  // ★ 改善点: 古いデータ・不完全なテキストブロックを新仕様のブロック配列へ自動クレンジングしてクラッシュを完璧に防止
   const openEditModal = (note) => {
     if (!note) return;
     setEditingNote(note);
@@ -345,7 +374,14 @@ export default function App() {
     if (Array.isArray(note.blocks)) {
       initialBlocks = note.blocks.map(b => {
         if (typeof b === 'string') return { id: generateId(), type: 'text', content: b, checked: false };
-        if (b && typeof b === 'object') return { id: b.id || generateId(), type: b.type || 'text', content: typeof b.content === 'string' ? b.content : '', checked: !!b.checked };
+        if (b && typeof b === 'object') {
+          return { 
+            id: typeof b.id === 'string' && b.id ? b.id : generateId(), 
+            type: typeof b.type === 'string' ? b.type : 'text', 
+            content: typeof b.content === 'string' ? b.content : '', 
+            checked: !!b.checked 
+          };
+        }
         return null;
       }).filter(Boolean);
     }
@@ -400,6 +436,7 @@ export default function App() {
     }
   };
 
+  // --- ドラッグ＆ドロップ（カテゴリー） ---
   const handleCategoryDragStart = (e, id) => {
     if (!isCategoryEditMode) { e.preventDefault(); return; }
     e.stopPropagation();
@@ -463,6 +500,7 @@ export default function App() {
     await setDoc(getNoteDoc(sourceNoteId), { categoryId: targetCategoryId, order: Date.now() }, { merge: true });
   };
 
+  // --- ドラッグ＆ドロップ（メモ・付箋） ---
   const handleDragStart = (e, id) => {
     e.dataTransfer.setData('noteId', id); setDraggedNoteId(id);
     setTimeout(() => { const el = document.getElementById(`note-${id}`); if (el) el.classList.add('opacity-40'); }, 0);
@@ -545,6 +583,7 @@ export default function App() {
     setIsModalOpen(true);
   };
 
+  // --- ドラッグ＆ドロップ（リンク集） ---
   const handleLinkDragStart = (e, id) => {
     e.dataTransfer.setData('linkId', id); setDraggedLinkId(id);
   };
@@ -563,7 +602,7 @@ export default function App() {
     const sourceId = e.dataTransfer.getData('linkId');
     if (!sourceId || sourceId === targetId || !user) return;
 
-    const currentLinks = linkFilter === 'すべて' ? safeLinks : safeLinks.filter(l => (l.groupName || 'すべて') === linkFilter);
+    const currentLinks = linkFilter === 'すべて' ? safeLinks : safeLinks.filter(l => l && (l.groupName || 'すべて') === linkFilter);
     const sortedCurrentLinks = currentLinks.sort((a,b) => a.order - b.order);
     
     const sourceIdx = sortedCurrentLinks.findIndex(l => l && l.id === sourceId);
@@ -592,6 +631,76 @@ export default function App() {
     setLinkDragOverIndicator(null);
   };
 
+  const saveLink = async () => {
+    if (!user || !safeLinkFormData.word || !safeLinkFormData.url) return;
+    const id = safeLinkFormData.id || generateId();
+    await setDoc(getLinkDoc(id), { ...safeLinkFormData, id, order: linkFormData.order || Date.now() }, { merge: true });
+    setIsLinkModalOpen(false);
+  };
+
+  const deleteLink = async (id) => {
+    if (!user || !id) return;
+    await deleteDoc(getLinkDoc(id));
+    setIsLinkModalOpen(false);
+  };
+
+  // 11:08:55 以降の復旧追加された activeNotes 等の算出、および安全対策
+  let activeNotes = [];
+  if (activeCategoryId === 'all_list') {
+    let filtered = safeNotes.filter(n => n && (showCompleted ? true : !n.isCompleted));
+    const categoryOrderMap = safeCategories.reduce((acc, cat) => { if (cat && cat.id) acc[cat.id] = cat.order; return acc; }, {});
+    
+    filtered.sort((a, b) => {
+      if (!a || !b) return 0;
+      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      const orderA = a.categoryId === 'freenote' ? -1 : (categoryOrderMap[a.categoryId] !== undefined ? categoryOrderMap[a.categoryId] : Infinity);
+      const orderB = b.categoryId === 'freenote' ? -1 : (categoryOrderMap[b.categoryId] !== undefined ? categoryOrderMap[b.categoryId] : Infinity);
+
+      if (allListSortConfig.key === 'dueDate') {
+        if (dateA !== dateB) return allListSortConfig.direction === 'asc' ? (dateA < dateB ? -1 : 1) : (dateA < dateB ? 1 : -1);
+        if (orderA !== orderB) return orderA - orderB;
+        return (a.order || 0) - (b.order || 0);
+      } else if (allListSortConfig.key === 'category') {
+        if (orderA !== orderB) return allListSortConfig.direction === 'asc' ? orderA - orderB : orderB - orderA;
+        if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+        return (a.order || 0) - (b.order || 0);
+      }
+      return 0;
+    });
+    activeNotes = filtered;
+  } else if (activeCategoryId === 'deadline') {
+    activeNotes = safeNotes.filter(n => n && n.dueDate && (showCompleted ? true : !n.isCompleted)).sort((a, b) => {
+      if (!a || !b) return 0;
+      return new Date(a.dueDate) - new Date(b.dueDate);
+    });
+  } else if (activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook') {
+    activeNotes = safeNotes.filter(n => n && n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted));
+  }
+
+  // ★ ゼロクラッシュ配列
+  const safeActiveNotes = Array.isArray(activeNotes) ? activeNotes.filter(Boolean) : [];
+  
+  // ★ ゼロクラッシュリンクグループ算出（l?.groupNameのぬるガード付き）
+  const linkGroups = ['すべて', ...Array.from(new Set(safeLinks.map(l => l && typeof l.groupName === 'string' ? l.groupName : '').filter(Boolean)))];
+  if (!linkGroups.includes('一般')) linkGroups.push('一般');
+  const filteredLinks = linkFilter === 'すべて' ? safeLinks : safeLinks.filter(l => l && (l.groupName || '一般') === linkFilter);
+
+  // 確認ダイアログ用アクションの実行
+  const executeConfirmAction = async () => {
+    const { actionType, targetId } = confirmDialog;
+    if (actionType === 'category') {
+      await handleDeleteCategory(targetId);
+    } else if (actionType === 'note') {
+      await deleteNote(targetId);
+      setIsModalOpen(false);
+    } else if (actionType === 'link') {
+      await deleteLink(targetId);
+    }
+    setConfirmDialog({ isOpen: false, message: '', targetId: null, actionType: null });
+  };
+
+  // --- ブロックエディタ ---
   const addBlock = (type) => {
     setFormData(prev => {
       const newId = generateId();
@@ -692,80 +801,18 @@ export default function App() {
     }
   };
 
-  const handleSort = (key) => {
-    if (allListSortConfig.key === key) {
-      setAllListSortConfig({ key, direction: allListSortConfig.direction === 'asc' ? 'desc' : 'asc' });
-    } else {
-      setAllListSortConfig({ key, direction: 'asc' });
-    }
-  };
-
-  if (!isConfigValid) {
-    return (
-      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333] p-6">
-        <div className="bg-[#FFFFFF] p-8 rounded-2xl shadow-lg border border-[#D7DCD9] max-w-lg w-full">
-          <div className="w-16 h-16 bg-[#F7F9F8] text-[#FFE600] rounded-full flex items-center justify-center mx-auto mb-4"><AlertCircle className="w-8 h-8" /></div>
-          <h2 className="text-[20px] font-bold mb-4 text-center">Firebaseの設定が完了していません</h2>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user && !loading) {
-    return (
-      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333] p-6">
-        <div className="bg-[#FFFFFF] p-10 rounded-3xl shadow-xl border border-[#D7DCD9] max-w-md w-full text-center">
-          <div className="w-20 h-20 bg-[#E0FFEE] text-[#00CC5B] rounded-2xl flex items-center justify-center mx-auto mb-6 transform rotate-3"><CheckSquare className="w-10 h-10" /></div>
-          <h1 className="text-[32px] font-bold mb-2 text-[#333333]">Kanban Notes</h1>
-          <button onClick={handleGoogleLogin} className="mt-8 w-full flex items-center justify-center gap-[8px] bg-[#FFFFFF] border-2 border-[#D7DCD9] hover:border-[#00CC5B] hover:bg-[#F7F9F8] text-[#333333] px-6 py-4 rounded-xl font-bold text-[16px] transition-all shadow-sm">
-            Googleでログインして始める
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  let activeNotes = [];
-  if (activeCategoryId === 'all_list') {
-    let filtered = safeNotes.filter(n => n && (showCompleted ? true : !n.isCompleted));
-    const categoryOrderMap = safeCategories.reduce((acc, cat) => { if (cat && cat.id) acc[cat.id] = cat.order; return acc; }, {});
-    
-    filtered.sort((a, b) => {
-      if (!a || !b) return 0;
-      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-      const orderA = a.categoryId === 'freenote' ? -1 : (categoryOrderMap[a.categoryId] !== undefined ? categoryOrderMap[a.categoryId] : Infinity);
-      const orderB = b.categoryId === 'freenote' ? -1 : (categoryOrderMap[b.categoryId] !== undefined ? categoryOrderMap[b.categoryId] : Infinity);
-
-      if (allListSortConfig.key === 'dueDate') {
-        if (dateA !== dateB) return allListSortConfig.direction === 'asc' ? (dateA < dateB ? -1 : 1) : (dateA < dateB ? 1 : -1);
-        if (orderA !== orderB) return orderA - orderB;
-        return (a.order || 0) - (b.order || 0);
-      } else if (allListSortConfig.key === 'category') {
-        if (orderA !== orderB) return allListSortConfig.direction === 'asc' ? orderA - orderB : orderB - orderA;
-        if (dateA !== dateB) return dateA < dateB ? -1 : 1;
-        return (a.order || 0) - (b.order || 0);
-      }
-      return 0;
-    });
-    activeNotes = filtered;
-  } else if (activeCategoryId === 'deadline') {
-    activeNotes = safeNotes.filter(n => n && n.dueDate && (showCompleted ? true : !n.isCompleted)).sort((a, b) => {
-      if (!a || !b) return 0;
-      return new Date(a.dueDate) - new Date(b.dueDate);
-    });
-  } else if (activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook') {
-    activeNotes = safeNotes.filter(n => n && n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted));
-  }
-
-  const safeActiveNotes = Array.isArray(activeNotes) ? activeNotes.filter(Boolean) : [];
-  const linkGroups = ['すべて', ...Array.from(new Set(safeLinks.map(l => l?.groupName).filter(Boolean)))];
-  if (!linkGroups.includes('一般')) linkGroups.push('一般');
-  const filteredLinks = linkFilter === 'すべて' ? safeLinks : safeLinks.filter(l => l && (l.groupName || '一般') === linkFilter);
-
-  // ★ 看板ボード表示名の安全キャスト（真っ白エラープロテクト）
+  // 看板ボード表示名の安全キャスト（真っ白エラープロテクト）
   const activeCategoryObj = safeCategories.find(c => c && c.id === activeCategoryId);
   const activeCategoryName = activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : (activeCategoryObj && typeof activeCategoryObj.name === 'string' ? activeCategoryObj.name : 'ボード');
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#666666]">
+        <Loader2 className="w-8 h-8 animate-spin text-[#00CC5B] mb-4" />
+        <p className="font-medium text-[16px]">同期中...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F7F9F8] text-[#333333]">
@@ -895,7 +942,6 @@ export default function App() {
           )}
         </header>
 
-        {}
         <main className="flex-1 overflow-y-auto relative">
           
           {/* リスト表示（すべてのメモ） */}
@@ -1003,16 +1049,16 @@ export default function App() {
                                   return (
                                     <div key={block.id || generateId()} className="py-0">
                                       {block.type === 'text' && <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="whitespace-pre-wrap font-medium leading-[1.6] text-[14px] text-[#666666] break-words" />}
-                                      {/* ★ リスト・チェックボックスの「・」とテキストの高さピッタリ調整（flex-start ＋ mt-[2px] などのピクセルベース調整） */}
+                                      {/* ★ リスト・チェックボックスの「・」とテキストの高さピッタリ調整 */}
                                       {block.type === 'list' && (
                                         <div className="flex items-start gap-[6px] font-medium leading-[1.6] text-[14px] text-[#666666]">
-                                          <span className="font-bold mt-[1px] text-[18px] leading-none shrink-0 select-none">•</span>
+                                          <span className="font-bold mt-[4px] text-[18px] leading-none shrink-0 select-none">•</span>
                                           <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className="break-words flex-1" />
                                         </div>
                                       )}
                                       {block.type === 'checkbox' && (
                                         <div className="flex items-start gap-[6px] cursor-pointer group/check font-medium leading-[1.6] text-[14px]" onClick={(e) => handleBoardBlockCheckToggle(e, note.id, block.id)}>
-                                          {block.checked ? <CheckCircle2 className="w-[18px] h-[18px] text-[#00CC5B] mt-[2px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[18px] h-[18px] text-[#C4C4C4] mt-[2px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
+                                          {block.checked ? <CheckCircle2 className="w-[18px] h-[18px] text-[#00CC5B] mt-[4px] flex-shrink-0 group-hover/check:opacity-70" /> : <Circle className="w-[18px] h-[18px] text-[#C4C4C4] mt-[4px] flex-shrink-0 group-hover/check:text-[#00CC5B]" />}
                                           <div dangerouslySetInnerHTML={{ __html: applyDictionaryLinks(typeof block.content === 'string' ? block.content : '', safeLinks, note.categoryId) }} className={`${block.checked ? 'line-through text-[#666666]' : 'text-[#666666]'} leading-[1.6] break-words flex-1`} />
                                         </div>
                                       )}
@@ -1048,7 +1094,7 @@ export default function App() {
               <div className="flex gap-2 mb-4 overflow-x-auto custom-scrollbar pb-1">
                 {linkGroups.map(group => (
                   <button 
-                    key={group} 
+                    key={typeof group === 'string' ? group : generateId()} 
                     onClick={() => setLinkFilter(group)}
                     className={`px-4 py-2 rounded-full text-[14px] font-bold whitespace-nowrap transition-colors border ${linkFilter === group ? 'bg-[#333333] text-white border-[#333333]' : 'bg-white text-[#666666] border-[#D7DCD9] hover:border-[#333333]'}`}
                   >
@@ -1101,7 +1147,7 @@ export default function App() {
             </div>
           )}
 
-          {/* ★ 看板ボード表示（通常カード一覧） */}
+          {/* 看板ボード表示 */}
           {activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook' && activeCategoryId !== 'all_list' && (
             <div className="max-w-7xl mx-auto h-full p-4 sm:p-6">
               {safeActiveNotes.length === 0 ? (
@@ -1147,7 +1193,7 @@ export default function App() {
                             {typeof note.title === 'string' ? note.title : String(note.title || '無題')}
                           </h3>
                           <button onClick={(e) => toggleComplete(e, note.id)} className={`absolute top-2 right-2 sm:top-3 sm:right-3 transition-colors p-0.5 sm:p-1 rounded-full shadow-sm border z-10 ${note.isCompleted ? 'text-[#00CC5B] bg-[#E0FFEE] border-[#00CC5B]' : 'text-[#C4C4C4] bg-[#FFFFFF] border-[#D7DCD9]'}`}>
-                            {note.isCompleted ? <CheckCircle2 className="w-4 h-4 sm:w-5 h-5" /> : <Circle className="w-4 h-4 sm:w-5 h-5 hover:text-[#00CC5B]" />}
+                            {note.isCompleted ? <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" /> : <Circle className="w-4 h-4 sm:w-5 sm:h-5 hover:text-[#00CC5B]" />}
                           </button>
                         </div>
                         <div className="relative overflow-hidden max-h-[300px] rounded-b-lg">
@@ -1197,12 +1243,12 @@ export default function App() {
               <div className="flex-1 flex items-center gap-1 sm:gap-2 overflow-x-auto custom-scrollbar pb-1 -mb-1">
                 <input type="text" required value={formData.title || ''} onChange={(e) => setFormData({ ...formData, title: e.target.value })} className="flex-1 min-w-[80px] sm:min-w-[120px] px-1 py-1 text-[16px] sm:text-[18px] font-bold text-[#333333] bg-transparent border-b-[2px] border-transparent hover:border-[#D7DCD9] focus:border-[#00CC5B] outline-none transition-colors placeholder:text-[#666666]" placeholder="タイトル" />
                 
-                {/* 期限（年を省略した MM/DD 表示） */}
+                {/* 期限（年を省略した MM/DD 表示・安全ガード付き） */}
                 <div className="flex items-center bg-[#FFFFFF] border border-[#D7DCD9] rounded-lg px-1.5 sm:px-2 py-1 focus-within:border-[#00CC5B] transition-colors shrink-0 hover:border-[#C4C4C4] h-8">
                   <Calendar className="w-3.5 h-3.5 text-[#666666] mr-1 hidden sm:block" />
                   <div className="relative flex items-center h-full">
                     <span className="text-[12px] sm:text-[13px] text-[#333333] font-bold whitespace-nowrap text-center min-w-[36px] sm:min-w-[40px]">
-                      {dueDateParts.date ? `${dueDateParts.date.split('-')[1]}/${dueDateParts.date.split('-')[2]}` : '日付設定'}
+                      {getCompactDueDateText(dueDateParts.date)}
                     </span>
                     <input type="date" value={dueDateParts.date} onChange={(e) => handleDateChange('date', e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                   </div>
@@ -1213,10 +1259,10 @@ export default function App() {
                   <span className="text-[#666666] text-[11px] sm:text-[12px] font-medium ml-0.5">時</span>
                 </div>
 
-                {/* ボード名選択 */}
+                {/* ボード名選択（c.nameのクラッシュガードを完全強化） */}
                 <select value={formData.categoryId || 'freenote'} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
                   <option value="freenote">フリーノート</option>
-                  {safeCategories.map(c => c && <option key={c.id} value={c.id}>{c.name}</option>)}
+                  {safeCategories.map(c => c && c.id && <option key={c.id} value={c.id}>{typeof c.name === 'string' ? c.name : '無題のボード'}</option>)}
                 </select>
               </div>
 
@@ -1260,7 +1306,7 @@ export default function App() {
                 {/* 仕切り線 */}
                 <div className="w-px h-6 bg-[#D7DCD9] shrink-0"></div>
 
-                {/* 2. インライン文字装飾グループ */}
+                {/* 2. インライン文字装飾グループ（WYSIWYG用ネイティブコマンド） */}
                 <div className="flex items-center gap-1 shrink-0">
                   <span className="text-[11px] font-bold text-[#C4C4C4] mr-1 hidden sm:inline">装飾:</span>
                   <button 
