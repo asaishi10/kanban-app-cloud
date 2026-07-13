@@ -170,6 +170,7 @@ const getCompactDueDateText = (dateStr) => {
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [dbError, setDbError] = useState(null); // ★ データベース接続エラー検知用
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isCategoryEditMode, setIsCategoryEditMode] = useState(false);
@@ -281,6 +282,7 @@ export default function App() {
     
     let isInitialLoad = true;
 
+    // ★ 改善点: 各種データベース同期にエラーコールバックを設置し、フリーズを100%回避する
     const unsubCategories = onSnapshot(categoriesRef, (snapshot) => {
       const loadedCategories = snapshot.docs.map(d => {
         const data = d.data();
@@ -299,6 +301,10 @@ export default function App() {
         setCategories(loadedCategories);
       }
       isInitialLoad = false;
+    }, (error) => {
+      console.error("Firebase Sync error (Categories):", error);
+      setDbError("データベースの初期接続に失敗しました。認証情報の有効期限切れか、セキュリティルールの不具合の可能性があります。");
+      setLoading(false);
     });
 
     const unsubNotes = onSnapshot(notesRef, (snapshot) => {
@@ -309,6 +315,10 @@ export default function App() {
       });
       setNotes(loadedNotes.filter(Boolean));
       setLoading(false);
+    }, (error) => {
+      console.error("Firebase Sync error (Notes):", error);
+      setDbError("データベース（メモデータ）との同期に失敗しました。セキュリティルール（Rules）の有効期限が切れている可能性が極めて高いです。");
+      setLoading(false);
     });
 
     const unsubLinks = onSnapshot(linksRef, (snapshot) => {
@@ -318,6 +328,10 @@ export default function App() {
         return data;
       });
       setLinks(loadedLinks.filter(Boolean));
+    }, (error) => {
+      console.error("Firebase Sync error (Links):", error);
+      setDbError("辞書リンク集の同期に失敗しました。Firebase側のアクセス制限をご確認ください。");
+      setLoading(false);
     });
 
     return () => { unsubCategories(); unsubNotes(); unsubLinks(); };
@@ -631,19 +645,6 @@ export default function App() {
     setLinkDragOverIndicator(null);
   };
 
-  const saveLink = async () => {
-    if (!user || !safeLinkFormData.word || !safeLinkFormData.url) return;
-    const id = safeLinkFormData.id || generateId();
-    await setDoc(getLinkDoc(id), { ...safeLinkFormData, id, order: linkFormData.order || Date.now() }, { merge: true });
-    setIsLinkModalOpen(false);
-  };
-
-  const deleteLink = async (id) => {
-    if (!user || !id) return;
-    await deleteDoc(getLinkDoc(id));
-    setIsLinkModalOpen(false);
-  };
-
   // 11:08:55 以降の復旧追加された activeNotes 等の算出、および安全対策
   let activeNotes = [];
   if (activeCategoryId === 'all_list') {
@@ -674,7 +675,7 @@ export default function App() {
       if (!a || !b) return 0;
       return new Date(a.dueDate) - new Date(b.dueDate);
     });
-  } else if (activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook') {
+  } else if (activeCategoryId !== 'freenote' && activeCategoryId !== 'linkbook' && activeCategoryId !== 'all_list') {
     activeNotes = safeNotes.filter(n => n && n.categoryId === activeCategoryId && (showCompleted ? true : !n.isCompleted));
   }
 
@@ -801,9 +802,59 @@ export default function App() {
     }
   };
 
+  // すべてのメモのソートハンドラ
+  const handleSort = (key) => {
+    if (allListSortConfig.key === key) {
+      setAllListSortConfig({ key, direction: allListSortConfig.direction === 'asc' ? 'desc' : 'asc' });
+    } else {
+      setAllListSortConfig({ key, direction: 'asc' });
+    }
+  };
+
   // 看板ボード表示名の安全キャスト（真っ白エラープロテクト）
   const activeCategoryObj = safeCategories.find(c => c && c.id === activeCategoryId);
   const activeCategoryName = activeCategoryId === 'freenote' ? 'フリーノート' : activeCategoryId === 'deadline' ? '期限付きメモ' : activeCategoryId === 'linkbook' ? 'リンク集' : activeCategoryId === 'all_list' ? 'すべてのメモ' : (activeCategoryObj && typeof activeCategoryObj.name === 'string' ? activeCategoryObj.name : 'ボード');
+
+  // ★ データベース同期に起因するエラーが検出された際の「接続エラー表示画面」（無言の同期フリーズを防止）
+  if (dbError) {
+    return (
+      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333] p-6">
+        <div className="bg-[#FFFFFF] p-8 rounded-2xl shadow-lg border border-[#ED1C24] max-w-lg w-full text-center">
+          <div className="w-16 h-16 bg-[#FFEAEB] text-[#ED1C24] rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-8 h-8" />
+          </div>
+          <h2 className="text-[20px] font-bold mb-4 text-[#333333]">データベース接続エラー</h2>
+          <p className="text-[14px] text-[#666666] mb-6 leading-relaxed">
+            {dbError}
+          </p>
+          <div className="text-[12px] text-[#C4C4C4] border-t pt-4 text-left">
+            <p className="font-bold">一般的な解決手順（セキュリティルールの再設定）：</p>
+            <ol className="list-decimal pl-4 space-y-1 mt-1 text-[#666666]">
+              <li>Firebase Consoleを開き、対象のプロジェクトを選択します。</li>
+              <li>左メニューの <strong>Build</strong> &gt; <strong>Firestore Database</strong> をクリックします。</li>
+              <li>上部タブの <strong>ルール（Rules）</strong> を選択します。</li>
+              <li>日付の有効期限（allow read, write: if request.time &lt; timestamp.date(...)）を最新の日付に延長するか、認証済みユーザーのみ常時許可するルール（if request.auth != null）に変更して <strong>公開</strong> をクリックします。</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ★ ログイン画面
+  if (!user && !loading) {
+    return (
+      <div className="min-h-screen bg-[#F7F9F8] flex flex-col items-center justify-center text-[#333333] p-6">
+        <div className="bg-[#FFFFFF] p-10 rounded-3xl shadow-xl border border-[#D7DCD9] max-w-md w-full text-center">
+          <div className="w-20 h-20 bg-[#E0FFEE] text-[#00CC5B] rounded-2xl flex items-center justify-center mx-auto mb-6 transform rotate-3"><CheckSquare className="w-10 h-10" /></div>
+          <h1 className="text-[32px] font-bold mb-2 text-[#333333]">Kanban Notes</h1>
+          <button onClick={handleGoogleLogin} className="mt-8 w-full flex items-center justify-center gap-[8px] bg-[#FFFFFF] border-2 border-[#D7DCD9] hover:border-[#00CC5B] hover:bg-[#F7F9F8] text-[#333333] px-6 py-4 rounded-xl font-bold text-[16px] transition-all shadow-sm">
+            Googleでログインして始める
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -816,14 +867,6 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#F7F9F8] text-[#333333]">
-      <style dangerouslySetInnerHTML={{__html: `
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@500;700&family=Roboto:wght@500;700&display=swap');
-        body { font-family: 'Roboto', 'Noto Sans JP', sans-serif; font-weight: 500; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #D7DCD9; border-radius: 20px; }
-      `}} />
-
       {/* サイドバーオーバーレイ背景 */}
       {isSidebarOpen && <div className="fixed inset-0 bg-[#333333]/20 backdrop-blur-sm z-40 transition-opacity" onClick={() => setIsSidebarOpen(false)} />}
 
@@ -895,7 +938,7 @@ export default function App() {
                   <input type="text" value={editingCategoryName} onChange={(e) => setEditingCategoryName(e.target.value)} onBlur={() => saveCategoryName(category.id)} onKeyDown={(e) => e.key === 'Enter' && saveCategoryName(category.id)} autoFocus className="border border-[#00CC5B] rounded px-2 py-0.5 text-[14px] outline-none bg-[#FFFFFF] w-full" />
                 ) : (
                   <>
-                    <span className="font-bold text-[14px] select-none flex-1 truncate">{typeof category.name === 'string' ? category.name : '無題のボード'}</span>
+                    <span className="font-bold text-[14px] select-none flex-1 truncate">{category.name || '無題のボード'}</span>
                     {isCategoryEditMode && (
                       <div className="flex items-center ml-1 shrink-0 gap-1">
                         <button onClick={(e) => { e.stopPropagation(); setEditingCategoryId(category.id); setEditingCategoryName(category.name); }} className="p-1 text-[#666666] bg-[#F7F9F8] hover:text-[#00CC5B] hover:bg-[#E0FFEE] transition-colors rounded"><Edit2 className="w-3.5 h-3.5" /></button>
@@ -1259,7 +1302,7 @@ export default function App() {
                   <span className="text-[#666666] text-[11px] sm:text-[12px] font-medium ml-0.5">時</span>
                 </div>
 
-                {/* ボード名選択（c.nameのクラッシュガードを完全強化） */}
+                {/* ボード名選択 */}
                 <select value={formData.categoryId || 'freenote'} onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })} className="max-w-[80px] sm:max-w-[110px] px-1 sm:px-2 border border-[#D7DCD9] rounded-lg focus:outline-none focus:border-[#00CC5B] bg-[#FFFFFF] text-[11px] sm:text-[13px] text-[#333333] shrink-0 font-bold hover:border-[#C4C4C4] cursor-pointer h-8 truncate">
                   <option value="freenote">フリーノート</option>
                   {safeCategories.map(c => c && c.id && <option key={c.id} value={c.id}>{typeof c.name === 'string' ? c.name : '無題のボード'}</option>)}
